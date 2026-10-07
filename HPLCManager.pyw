@@ -80,6 +80,8 @@ class HPLCManager:
         self.var_picchi_cs = tk.BooleanVar(value=True)
         self.spettri = {}          # {nome cartella .D: {'t', 'wl', 'S', 'info'}} dai file .uv
         self._spec_win = None
+        self.strumento = {}        # {nome cartella .D: {'segnali': {titolo: {t, y, unit}}, 'moduli': [...], 'colonna': {...}}}
+        self._strum_win = None
         self.var_click_spec = tk.BooleanVar(value=True)
         self._marcatori_artisti = []   # artisti matplotlib dei marcatori sul cromatogramma (per rimuoverli senza ridisegnare)
         self._sp_colore_n = 0          # contatore per assegnare un colore stabile a ogni spettro scelto
@@ -171,6 +173,7 @@ class HPLCManager:
         m.add_command(label="Export Peaks (CSV)...", command=self.esporta_picchi)
         m.add_command(label="Export Spectra (CSV)...", command=self.esporta_spettri)
         m.add_command(label="Export Full DAD Data (CSV)...", command=self.esporta_dad_completo)
+        m.add_command(label="Export Instrument Curves (CSV)...", command=self.esporta_curve_strumento)
         m.add_separator()
         m.add_command(label="Save Figure Image (PNG, PDF, SVG)...", command=self.salva_figura_immagine)
         m.add_command(label="Save Figure (pickle)...", command=self.salva_figura_pickle)
@@ -200,6 +203,7 @@ class HPLCManager:
         m.add_separator()
         m.add_command(label="Spectra (DAD)...", command=self.apri_spettri)
         m.add_command(label="Several wavelengths...", command=self.apri_estrazione_multipla)
+        m.add_command(label="Instrument curves (pressure, gradient...)", command=self.apri_curve_strumento)
         self.menu_bar.add_cascade(label="Tools", menu=m)
         self.root.config(menu=self.menu_bar)
 
@@ -235,6 +239,8 @@ class HPLCManager:
                          ("Trim", self.apri_trim), ("Normalize", self.normalizza),
                          ("Spectra", self.apri_spettri)):
             tk.Button(fb, text=txt, command=cmd).pack(side=tk.LEFT, padx=1)
+        tk.Button(p, text="Instrument curves (pressure, gradient...)",
+                  command=self.apri_curve_strumento).pack(fill=tk.X, padx=4, pady=(3, 0))
         self.f_tool_host = tk.Frame(p)
         self.f_tool_host.pack(fill=tk.X, padx=4, pady=4)
 
@@ -406,6 +412,131 @@ class HPLCManager:
             y = y - S @ pesi(rif, banda_rif)
         return y
 
+    # Unita' e fattori di scala dei segnali di LCDIAG.REG: il valore memorizzato (uint32) e' il valore
+    # fisico moltiplicato per questo fattore (verificato su pressione, flusso, solventi, temperatura).
+    UNITA_DIAG = {'bar': 100.0, 'ml/min': 1000.0, '%': 10.0, '\xb0C': 100.0}
+
+    def leggi_diagnostica(self, path):
+        """Legge LCDIAG.REG di ChemStation: i profili registrati dallo strumento durante la corsa
+        (pressione, flusso, composizione dei solventi, temperatura colonna).
+
+        Ritorna {titolo: {'t': minuti (array), 'y': valori (array), 'unit': 'bar'|'ml/min'|'%'|'\xb0C'}}
+        in ordine di apparizione. Struttura (little-endian): per ogni segnale un array di uint32
+        preceduto dalle stringhe 'min\\0<unita'>\\0'; il numero di punti sta a 168 byte prima di 'min'
+        (uint32), l'intervallo di campionamento in minuti a 116 byte prima (double). Il titolo
+        ('PMP1, Pressure') e' nella testata che SEGUE l'array. Il tempo parte da 0 (inizio corsa):
+        e' un'ipotesi, coerente con la pressione a 4 s e la pressione finale del report.
+        """
+        with open(path, 'rb') as f:
+            b = f.read()
+        if b[3:4] != b'\x00' or b'REGISTER FILE' not in b[:24]:
+            raise ValueError("File .REG non riconosciuto: " + os.path.basename(path))
+        segnali = {}
+        for k, m in enumerate(re.finditer(rb'min\x00(bar|ml/min|%|\xb0C)\x00', b)):
+            u, e, unita = m.start(), m.end(), m.group(1).decode('latin-1')
+            if u < 168:
+                continue
+            n = struct.unpack('<I', b[u - 168:u - 164])[0]
+            dt = struct.unpack('<d', b[u - 116:u - 108])[0]
+            if not (0 < n <= 10000000) or e + 4 * n > len(b) or not (0 < dt < 10):
+                continue
+            y = np.frombuffer(b[e:e + 4 * n], dtype='<u4').astype(float) / self.UNITA_DIAG[unita]
+            testata = b[e + 4 * n:e + 4 * n + 1500]
+            t = re.search(rb'((?:[A-Z]{3}\d), [^\x00]+)\x00arial', testata)
+            titolo = t.group(1).decode('latin-1') if t else '%s signal %d' % (unita, k + 1)
+            if titolo in segnali:
+                titolo = '%s (%d)' % (titolo, k + 1)
+            segnali[titolo] = {'t': np.arange(n) * dt, 'y': y, 'unit': unita}
+        if not segnali:
+            raise ValueError("Nessun segnale riconosciuto in " + os.path.basename(path))
+        return segnali
+
+    def leggi_acqres(self, path):
+        """Legge ACQRES.REG di ChemStation: moduli dello strumento e dati della colonna.
+
+        Ritorna {'moduli': [{'name', 'part', 'serial', 'firmware', 'build'}], 'colonna': {...}}.
+        Registro con tabelle a colonne: le stringhe sono uint16 (lunghezza con NUL) + testo + NUL.
+        Moduli: 5 colonne di stringhe consecutive (serialNumber, FWrevision, buildNumber, Name,
+        PartNumber), una riga per modulo. Colonna: descrizione = la stringa che non e' versione del
+        software, nome strumento o percorso; lunghezza, diametro e granulometria sono i primi tre double
+        'tondi' della tabella 'Acquisition Results' (ColLength, ColDiameter, ParticleSize: assegnazione
+        dedotta dall'ordine dei campi e da valori tipici, 100 x 2.1 mm, 5 um, non verificata su altri file).
+        """
+        with open(path, 'rb') as f:
+            b = f.read()
+        if b[3:4] != b'\x00' or b'REGISTER FILE' not in b[:24]:
+            raise ValueError("File .REG non riconosciuto: " + os.path.basename(path))
+        testo_ok = re.compile(r'^[\x20-\x7e\xa0-\xff]+$')
+
+        def stringa(o):
+            if o < 0 or o + 2 > len(b):
+                return None
+            n = struct.unpack('<H', b[o:o + 2])[0]
+            if n < 2 or n > 200 or o + 2 + n > len(b) or b[o + 1 + n] != 0:
+                return None
+            t = b[o + 2:o + 1 + n].decode('latin-1')
+            return t if testo_ok.match(t) and any(c.isalnum() for c in t) else None
+
+        def catena(o):
+            out = []
+            while True:
+                t = stringa(o)
+                if t is None:
+                    return out
+                out.append((o, t))
+                o += 2 + len(t) + 1
+        migliore = []
+        o = 0
+        while o < len(b) - 2:
+            c = catena(o)
+            if len(c) > len(migliore):
+                migliore = c
+            o += max(1, sum(2 + len(t) + 1 for _, t in c) if c else 1)
+        moduli = []
+        colonne = [b'serialNumber', b'FWrevision', b'buildNumber', b'Name', b'PartNumber']
+        posizioni = [b.find(c) for c in colonne]
+        if len(migliore) >= 5 and len(migliore) % 5 == 0 and all(x >= 0 for x in posizioni) \
+                and posizioni == sorted(posizioni):
+            r = len(migliore) // 5
+            val = [t for _, t in migliore]
+            for i in range(r):
+                moduli.append({'serial': val[i], 'firmware': val[r + i], 'build': val[2 * r + i],
+                               'name': val[3 * r + i], 'part': val[4 * r + i]})
+        fine_catena = (migliore[-1][0] + 3 + len(migliore[-1][1])) if migliore else 0
+        inizio_catena = migliore[0][0] if migliore else 0
+        altre = []
+        o = 0
+        while o < len(b) - 2:
+            t = stringa(o)
+            if t is not None and len(t) >= 3 and not (inizio_catena <= o < fine_catena):
+                altre.append(t)
+                o += 2 + len(t) + 1
+            else:
+                o += 1
+        colonna = {}
+        for t in altre:
+            if t.startswith('Rev.') or '\\' in t or t.startswith('Instrument') or t.endswith('Results'):
+                continue
+            if re.fullmatch(r'[A-Za-z][A-Za-z0-9 ./-]{3,}', t) and not re.fullmatch(r'[A-Za-z]+[A-Z][a-z]+[A-Za-z]*', t):
+                colonna['description'] = t
+                break
+        ini = b.find(b'WriteInfo')
+        fine = inizio_catena if inizio_catena else len(b)
+        valori = []
+        o = ini + 9 if ini >= 0 else 0
+        while o + 8 <= fine:
+            v = struct.unpack('<d', b[o:o + 8])[0]
+            if v == v and 0.4 <= abs(v) <= 1000 and abs(v * 10 - round(v * 10)) < 1e-9:
+                valori.append(v)
+                o += 8
+            else:
+                o += 1
+        if len(valori) >= 2:
+            colonna['length_mm'], colonna['diameter_mm'] = valori[0], valori[1]
+        if len(valori) >= 3 and valori[2] <= 20:
+            colonna['particle_um'] = valori[2]
+        return {'moduli': moduli, 'colonna': colonna}
+
     def leggi_metadati_cartella(self, cartella):
         """Metadati dell'analisi dalla cartella .D: Report00.CSV (campione, iniezione, sequenza,
         pressione, flusso, solventi, segnali) e RUN.LOG (temperatura colonna).
@@ -443,6 +574,21 @@ class HPLCManager:
             if temp:
                 info['Column temperature'] = ('%.1f' % temp[0] if min(temp) == max(temp)
                                               else '%.1f-%.1f' % (min(temp), max(temp))) + ' \u00b0C'
+        acq = os.path.join(cartella, 'ACQRES.REG')
+        if os.path.isfile(acq):
+            try:
+                r = self.leggi_acqres(acq)
+            except Exception:
+                r = None
+            if r:
+                c = r['colonna']
+                if c.get('description'):
+                    info['Column'] = c['description']
+                if 'length_mm' in c:
+                    info['Column size'] = '%g x %g mm%s' % (c['length_mm'], c['diameter_mm'], (
+                        ', %g um' % c['particle_um']) if 'particle_um' in c else '')
+                for m in r['moduli']:
+                    info[m['name']] = '%s, S/N %s, FW %s' % (m['part'], m['serial'], m['firmware'])
         return info
 
     def _unisci_metadati(self, info, cartella):
@@ -454,6 +600,26 @@ class HPLCManager:
             if extra.get(nuovo) == info.get(vecchio):
                 del extra[nuovo]
         info.update(extra)
+
+    def _carica_strumento(self, cartella, base):
+        """Carica i profili dello strumento (LCDIAG.REG) e i dati di moduli e colonna (ACQRES.REG)."""
+        dati = {'segnali': {}, 'moduli': [], 'colonna': {}}
+        diag = os.path.join(cartella, 'LCDIAG.REG')
+        if os.path.isfile(diag):
+            try:
+                dati['segnali'] = self.leggi_diagnostica(diag)
+            except Exception as e:
+                traceback.print_exc()
+                messagebox.showwarning("Strumento", "Impossibile leggere LCDIAG.REG:\n%s" % e)
+        acq = os.path.join(cartella, 'ACQRES.REG')
+        if os.path.isfile(acq):
+            try:
+                r = self.leggi_acqres(acq)
+                dati['moduli'], dati['colonna'] = r['moduli'], r['colonna']
+            except Exception:
+                traceback.print_exc()
+        if dati['segnali'] or dati['moduli']:
+            self.strumento[base] = dati
 
     def _carica_uv(self, cartella, base):
         """Carica gli spettri DAD (.uv) di una cartella .D, se ci sono."""
@@ -511,6 +677,7 @@ class HPLCManager:
             canali = sorted(f for f in os.listdir(path) if f.lower().endswith('.ch'))
             base = os.path.splitext(os.path.basename(os.path.normpath(path)))[0]
             self._carica_uv(path, base)
+            self._carica_strumento(path, base)
             if base in self.spettri:
                 # con gli spettri DAD i segnali registrati (.ch) sono solo alcune lunghezze d'onda
                 # scelte all'acquisizione: si caricano su richiesta, di default si estrae da zero
@@ -696,8 +863,11 @@ class HPLCManager:
         for n in self._selezionati():
             c = self.cromatogrammi[n]
             self.meta.insert(tk.END, '== %s\n' % n)
-            for k, v in c['info'].items():
-                self.meta.insert(tk.END, '%-19s %s\n' % (k, v))
+            # le informazioni piu' usate in cima (campione, metodo, colonna, iniezione), poi il resto
+            prime = ('Sample', 'Date', 'Method', 'Column', 'Column size', 'Inj Volume', 'Location', 'Signal')
+            ordine = [k for k in prime if k in c['info']] + [k for k in c['info'] if k not in prime]
+            for k in ordine:
+                self.meta.insert(tk.END, '%-19s %s\n' % (k, c['info'][k]))
             df = c['df']
             self.meta.insert(tk.END, '%-19s %d (%.2f - %.2f min)\n' % (
                 'Points', len(df), df.index[0], df.index[-1]))
@@ -759,6 +929,8 @@ class HPLCManager:
         self._reset_vista = True
         self.cromatogrammi.clear()
         self.spettri.clear()
+        self.strumento.clear()
+        self._strum_chiudi()
         self._sp_chiudi_finestra()
         self._sp_live.clear()
         self._dirty = False
@@ -1527,11 +1699,14 @@ class HPLCManager:
 
     def _dati_sessione(self):
         return {'version': 1, 'cromatogrammi': self.cromatogrammi, 'spettri': self.spettri,
-                'sp_live': dict(self._sp_live), 'includi_ch': bool(self.var_includi_ch.get())}
+                'sp_live': dict(self._sp_live), 'includi_ch': bool(self.var_includi_ch.get()),
+                'strumento': self.strumento}
 
     def _applica_sessione(self, data):
         self.cromatogrammi = data['cromatogrammi']
         self.spettri = data.get('spettri', {})
+        self.strumento = data.get('strumento', {})
+        self._strum_chiudi()
         self._sp_live = dict(data.get('sp_live', {}))
         self.var_includi_ch.set(bool(data.get('includi_ch', False)))
         self._sp_chiudi_finestra()
@@ -1676,6 +1851,111 @@ class HPLCManager:
         top.geometry("1300x820")
         editor = pe.PlotEditor(top)
         editor.carica_figura(fig, title="figura corrente")
+
+    # ------------------------------------------------------------------ curve dello strumento
+    GRUPPI_STRUM = (('bar', 'Pressure (bar)'), ('%', 'Solvent composition (%)'),
+                    ('ml/min', 'Flow (ml/min)'), ('\xb0C', 'Temperature (\xb0C)'))
+
+    def _strum_chiudi(self):
+        w = self._strum_win
+        self._strum_win = None
+        if w is not None:
+            try:
+                w.destroy()
+            except Exception:
+                pass
+
+    def _strum_dataset(self):
+        """Dataset (cartella .D) di cui mostrare le curve: quello scelto nella finestra, o il primo."""
+        v = getattr(self, 'var_strum_set', None)
+        if v is not None and v.get() in self.strumento and self.strumento[v.get()]['segnali']:
+            return v.get()
+        for k, d in self.strumento.items():
+            if d['segnali']:
+                return k
+        return None
+
+    def tabella_strumento(self, ds):
+        """DataFrame delle curve del dataset `ds` sulla scala dei tempi del segnale piu' veloce
+        (pressione, flusso e solventi a 0.3 s); i segnali piu' lenti (temperatura, 1 s) sono
+        interpolati linearmente su quella scala."""
+        seg = self.strumento[ds]['segnali']
+        base = min(seg.values(), key=lambda d: d['t'][1] - d['t'][0] if len(d['t']) > 1 else 1e9)
+        out = pd.DataFrame(index=pd.Index(np.round(base['t'], 6), name='Time (min)'))
+        for titolo, d in seg.items():
+            out['%s [%s]' % (titolo, d['unit'])] = np.interp(base['t'], d['t'], d['y'])
+        return out
+
+    def apri_curve_strumento(self):
+        ds = self._strum_dataset()
+        if ds is None:
+            messagebox.showinfo("Instrument curves", "Nessuna curva dello strumento: apri una cartella .D "
+                                "che contenga LCDIAG.REG.")
+            return
+        self._strum_chiudi()
+        w = tk.Toplevel(self.root)
+        w.title("Instrument curves - %s" % ds)
+        w.geometry("900x720")
+        top = tk.Frame(w)
+        top.pack(fill=tk.X, padx=6, pady=4)
+        self.var_strum_set = tk.StringVar(value=ds)
+        nomi = [k for k, d in self.strumento.items() if d['segnali']]
+        if len(nomi) > 1:
+            cb = ttk.Combobox(top, textvariable=self.var_strum_set, values=nomi, state='readonly', width=24)
+            cb.pack(side=tk.LEFT)
+            cb.bind('<<ComboboxSelected>>', lambda e: self._strum_disegna())
+        tk.Button(top, text="Export CSV", command=self.esporta_curve_strumento).pack(side=tk.RIGHT)
+        w.fig = Figure()
+        w.canvas = FigureCanvasTkAgg(w.fig, master=w)
+        NavigationToolbar2Tk(w.canvas, w).update()
+        w.canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+        self._strum_win = w
+        w.bind('<Destroy>', lambda e: setattr(self, '_strum_win', None) if e.widget is w else None)
+        self._strum_disegna()
+        return w
+
+    def _strum_disegna(self):
+        w = self._strum_win
+        ds = self._strum_dataset()
+        if w is None or ds is None:
+            return
+        w.title("Instrument curves - %s" % ds)
+        seg = self.strumento[ds]['segnali']
+        gruppi = []
+        for unita, titolo in self.GRUPPI_STRUM:
+            membri = [(t, d) for t, d in seg.items() if d['unit'] == unita]
+            if unita == '%':      # solo i solventi che non restano a zero
+                membri = [(t, d) for t, d in membri if np.any(d['y'] > 0)]
+            if membri:
+                gruppi.append((titolo, membri))
+        w.fig.clear()
+        assi = w.fig.subplots(len(gruppi), 1, sharex=True) if gruppi else []
+        assi = np.atleast_1d(assi)
+        for ax, (titolo, membri) in zip(assi, gruppi):
+            for t, d in membri:
+                etichetta = t.split(', ', 1)[-1]
+                ax.plot(d['t'], d['y'], lw=1, label=etichetta)
+            ax.set_ylabel(titolo, fontsize=9)
+            ax.tick_params(labelsize=8)
+            if len(membri) > 1:
+                ax.legend(fontsize=8, loc='upper right')
+        if len(assi):
+            assi[-1].set_xlabel("Time (min)")
+        w.fig.tight_layout()
+        w.canvas.draw()
+
+    def esporta_curve_strumento(self):
+        ds = self._strum_dataset()
+        if ds is None:
+            messagebox.showinfo("Export Instrument Curves", "Nessuna curva dello strumento caricata.")
+            return
+        path = self._scegli_file_salvataggio("Export Instrument Curves", '.csv', [("CSV", "*.csv")])
+        if not path:
+            return
+        df = self.tabella_strumento(ds)
+        if self._scrivi_csv(df, path, "Export Instrument Curves"):
+            messagebox.showinfo("Export Instrument Curves", "%d punti, %d curve salvati:\n%s"
+                                % (len(df), df.shape[1], path))
 
     def on_exit(self):
         if self._dirty and not messagebox.askyesno(

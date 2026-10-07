@@ -45,6 +45,8 @@ Exports are CSV with `;` separator and latin-1 encoding, like LabSpectrumManager
 
 Picked spectra live in `self._spettri_scelti` (`dataset, t, wl, y, colore, visibile, linea`, plus the Tk `riga`/`var`); the spectra window (`_sp_finestra`) lists them with a checkbox (hide/show: `_sp_spunta`) and a remove cross (`_sp_rimuovi`); the dashed pick lines on the chromatogram come from `_marcatori_visibili()`/`_aggiorna_marcatori()` (no full redraw, zoom kept), and `tabella_spettri()` exports only the ticked ones.
 
+Instrument data: `leggi_diagnostica()` (LCDIAG.REG -> `{title: {t, y, unit}}`: pressure, flow, solvents A-D, column temperature) and `leggi_acqres()` (ACQRES.REG -> modules and column) read the `.REG` registers (format notes in `knowledge/chemstation.md`); `_carica_strumento()` stores them in `self.strumento` (also saved in sessions) and `leggi_metadati_cartella()` adds the column and modules to the metadata. `apri_curve_strumento()` is the stacked-curves window (grouped by unit), `esporta_curve_strumento()` / `tabella_strumento()` the CSV export.
+
 Tests: `py -m unittest discover -s tests -v` (the real-sample tests are skipped if
 `campioni di esempio/009-0201.D` is missing).
 

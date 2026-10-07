@@ -82,8 +82,35 @@ Letti da HPLCManager (`leggi_metadati_cartella`, `leggi_ch`, `leggi_uv`):
   `Acq. Operator` contiene la data dell'iniezione, non l'operatore (si scarta);
 - `RUN.LOG`: temperatura colonna (min-max sui messaggi del termostato).
 
-**Non letti**: `ACQRES.REG` (registro binario: moduli 1100 con numeri di serie e firmware, colonna
-"ODS Hypersil", ecc.), `LCDIAG.REG` (465 kB di diagnostica), il resto di `RUN.LOG` (pressioni nel tempo,
+## Registri `.REG` (decodificati e verificati)
+Stesso contenitore per `ACQRES.REG` e `LCDIAG.REG`: stringa Pascal `"32"`, `REGISTER FILE`, versione
+`A.00.01`, poi tabelle con testate (`ObjClass`, `Title`, `DataType`...) e dati. Little-endian.
+
+**`LCDIAG.REG`** = i profili che lo strumento ha registrato durante la corsa (nel campione 7 segnali):
+- ogni segnale e' un **array di `uint32`** preceduto dalle stringhe `min\0<unita'>\0`
+  (`bar`, `ml/min`, `%`, `°C`); il valore fisico e' `uint32 / fattore` con fattore **100** (bar), **1000**
+  (ml/min), **10** (%), **100** (°C);
+- numero di punti = `uint32` a **168 byte prima** di `min`; intervallo di campionamento = `double` (in
+  **minuti**) a **116 byte prima** (0,005 min = 0,3 s per pompa, 1/60 min = 1 s per il termostato);
+- il **titolo** (`PMP1, Pressure`...) sta nella testata che **segue** l'array, prima di `arial`;
+- segnali del campione: pressione (18000 punti), flusso, solventi A-D (composizione %), temperatura
+  colonna sinistra (5400 punti). Il tempo parte da 0 (ipotesi: coerente con la pressione a 4 s, 96,05 bar,
+  contro 96,45 bar in `Report00.CSV`, e con la pressione finale, 104,5 bar contro 104,72). A+B+C+D = 100 ±0,5%.
+- Altri segnali di moduli diversi (autocampionatore, DAD: temperature lampada, ore di accensione...) sono nella
+  parte iniziale (tabelle `Start/Stop Conditions`, `VisBurnTime`, `UVOnTime`...): **non letti**.
+
+**`ACQRES.REG`** = moduli e colonna: stringhe come `uint16` lunghezza (con NUL) + testo + NUL.
+- **Moduli** (nel campione 4): cinque colonne di stringhe consecutive, in questo ordine: serialNumber,
+  FWrevision, buildNumber, Name, PartNumber, una riga per modulo (G1311A pompa quaternaria FW A.05.06;
+  G1313A autocampionatore FW A.05.06; G1315B DAD FW A.05.09; G1316A termostato FW A.05.09; i numeri di serie,
+  della forma `DE` + 8 cifre, non sono riportati qui).
+- **Colonna**: descrizione `ODS Hypersil` (la stringa che non e' versione software, strumento o percorso);
+  lunghezza 100 mm, diametro 2,1 mm, granulometria 5 um sono i primi tre double "tondi" dei dati numerici.
+  L'assegnazione ai campi (ColLength, ColDiameter, ParticleSize) e' **dedotta** (ordine dei campi e valori
+  tipici di una Hypersil ODS 100 x 2.1 mm, 5 um), non verificata su altri file; un quarto double (68) non
+  e' identificato e non viene mostrato. Il file del metodo `.M` non e' nella cartella `.D`.
+
+**Non letti**: il resto di `RUN.LOG` (pressioni nel tempo,
 eventi), `Report.TXT` (ripete i REPORTnn.CSV), gli 8 byte non decodificati di ogni record `.uv`, la coda
 del `.uv`, il file del metodo `.M` (non e' nella cartella `.D`).
 
