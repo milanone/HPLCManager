@@ -1,0 +1,5 @@
+numpy
+pandas
+matplotlib
+scipy        # optional: peak detection and fitting
+tkinterdnd2  # optional: drag-and-drop of files
