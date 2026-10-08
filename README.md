@@ -66,7 +66,7 @@ issue with the file names and sizes. Known limits:
 pythonw HPLCManager.pyw [chromatogram_file_or_.D_folder]
 ```
 
-or `HPLCManager.bat`. Tests: `py -m unittest discover -s tests -v` (the tests that need real data are
+Tests: `py -m unittest discover -s tests -v` (the tests that need real data are
 skipped when the sample folder is missing).
 
 ## Dependencies

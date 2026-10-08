@@ -16,7 +16,6 @@ recorded `.ch` channels are optional), and every action edits what is selected i
 ## Running / tests
 
 ```bash
-HPLCManager.bat [file_or_.D_folder]
 pythonw HPLCManager.pyw [file_or_.D_folder]
 py -m unittest discover -s tests -v     # real-sample tests are skipped if the sample folder is missing
 ```
