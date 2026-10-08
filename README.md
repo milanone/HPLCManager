@@ -47,7 +47,7 @@ leave out the cursor and the dashed lines of the picked spectra.
 ## Supported data and limits
 
 ChemStation `.ch` version 30, DAD `.uv` version 31, and the `LCDIAG.REG` / `ACQRES.REG` registers, all
-decoded natively (no external tools; format notes in `knowledge/chemstation.md`), plus two-column CSV.
+decoded natively (no external tools; format notes in `CLAUDE.md`), plus two-column CSV.
 
 These formats were worked out from **one** ChemStation Rev. A.10.02 run (1100 series, DAD G1315B, 200-600 nm
 at 2 nm). Other ChemStation versions, detectors or methods may not load; if a folder does not, open an
