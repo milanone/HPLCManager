@@ -1,87 +1,90 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
-General rules for all of Francesco's projects (stack, code conventions, repository rules, git/GitHub, the
-Drive mirror, how he works) are in `..\CLAUDE.md`; this file has the project-specific details.
+Questo file guida Claude Code (claude.ai/code) quando lavora su questo repository. Tutti i `CLAUDE.md` sono in
+italiano. Le regole comuni a tutti i progetti di Francesco (stack, convenzioni di codice, regole del repository,
+git/GitHub, mirror su Drive, come lavora) stanno in `..\CLAUDE.md`; qui ci sono i dettagli del progetto.
 
-## Purpose and priorities
+## Scopo e priorita'
 
-Viewer for Agilent ChemStation HPLC-DAD data (Rev. A.10.02, 1100 series, DAD G1315B). The central use case:
-**open a raw `.D` folder, choose wavelength, bandwidth and reference (on/off), see the extracted trace, click
-the chromatogram to see the spectrum at that time**. ChemStation only exports the signals chosen before the
-acquisition even though the DAD spectra are all in the folder; OpenChrom (tried before) failed Francesco on
-exactly this. So: the basic operations must work first time, the extracted trace is the default view (the
-recorded `.ch` channels are optional), and every action edits what is selected in the list.
+Visualizzatore di dati HPLC-DAD Agilent ChemStation (Rev. A.10.02, serie 1100, DAD G1315B). Caso d'uso centrale:
+**aprire una cartella `.D` grezza, scegliere lunghezza d'onda, banda e riferimento (acceso/spento), vedere la traccia
+estratta, cliccare sul cromatogramma per vedere lo spettro a quel tempo**. ChemStation esporta solo i segnali scelti
+prima dell'acquisizione, anche se gli spettri DAD completi sono tutti nella cartella; OpenChrom (provato prima) ha
+fallito con Francesco proprio su questo. Quindi: le operazioni base devono riuscire al primo tentativo, la traccia
+estratta e' la vista predefinita (i canali `.ch` registrati sono opzionali) e ogni azione modifica cio' che e'
+selezionato nella lista.
 
-## Running / tests
+## Avvio e test
 
 ```bash
-HPLCManager.bat [file_or_.D_folder]
-pythonw HPLCManager.pyw [file_or_.D_folder]
-py -m unittest discover -s tests -v     # real-sample tests are skipped if the sample folder is missing
+HPLCManager.bat [file_o_cartella_.D]
+pythonw HPLCManager.pyw [file_o_cartella_.D]
+py -m unittest discover -s tests -v     # i test sul campione reale si saltano se manca la cartella
 ```
 
-Sample data: `example data/009-0201.D` (gitignored: real data, never commit). Tk tests need a screen.
-Screenshots for the README are taken from the real program (`ImageGrab` on the window, window topmost) and
-checked before publishing.
+Dati di esempio: `example data/009-0201.D` (gitignorata: dati reali, mai da committare). I test Tk richiedono uno
+schermo. Gli screenshot del README si fanno dal programma vero (`ImageGrab` sulla finestra, finestra in primo piano)
+e si controllano prima di pubblicare.
 
-## Architecture
+## Architettura
 
-Single file `HPLCManager.pyw`, one class `HPLCManager` (Tkinter + matplotlib), 3-pane `tk.PanedWindow` like
-LabSpectrumManager (each pane given an explicit `width` and `stretch`: left table 400 px fixed, centre plot
-elastic, right panel 400 px fixed): data table (left), plot with toolbar and cursor readout (centre), scrollable
-right panel (`self.f_right_inner`: chromatogram list, metadata, tool buttons, tool panel in `self.f_tool_host`).
+File unico `HPLCManager.pyw`, una classe `HPLCManager` (Tkinter + matplotlib), `tk.PanedWindow` a 3 pannelli come
+LabSpectrumManager (a ogni pannello si danno `width` e `stretch` espliciti: tabella a sinistra 400 px fissi, grafico
+al centro elastico, pannello destro 400 px fissi): tabella dati (sinistra), grafico con barra strumenti e lettura
+del cursore (centro), pannello destro scrollabile (`self.f_right_inner`: lista cromatogrammi, metadati, bottoni
+degli strumenti, pannello dello strumento in `self.f_tool_host`).
 
-**Data model.** `self.chromatograms = {name: {'df': DataFrame (index = time in min, column 'mAU'), 'info': {...},
-'peaks': [...], 'cs_peaks': [...], 'hidden': bool, 'estr': {...}}}`. `peaks` = peaks computed here,
-`cs_peaks` = peaks from the ChemStation `REPORTnn.CSV` of the same folder, `estr` (only for traces extracted from
-the spectra) = `{ds, l, b, ref, rb}`, the parameters it was computed with. `self.spectra` = `{folder name: {'t',
-'wl', 'S', 'info'}}` (DAD cube), `self.instrument` = `{folder name: {'signals', 'modules', 'column'}}`.
+**Modello dati.** `self.chromatograms = {name: {'df': DataFrame (indice = tempo in min, colonna 'mAU'), 'info': {...},
+'peaks': [...], 'cs_peaks': [...], 'hidden': bool, 'estr': {...}}}`. `peaks` = picchi calcolati qui, `cs_peaks` =
+picchi del `REPORTnn.CSV` di ChemStation nella stessa cartella, `estr` (solo per le tracce estratte dagli spettri) =
+`{ds, l, b, ref, rb}`, i parametri con cui e' stata calcolata. `self.spectra` = `{nome cartella: {'t', 'wl', 'S',
+'info'}}` (cubo DAD), `self.instrument` = `{nome cartella: {'signals', 'modules', 'column'}}`.
 
-**Loading** (`process_file`): a `.D` folder loads `.uv` (`_load_uv`), the instrument registers
-(`_load_instrument`), and runs `_initial_extraction()` (first recorded signal's wavelength, 4 nm, reference off);
-its `.ch` files load only if File -> "Also load recorded channels" is on (or if there is no `.uv`). A single `.ch`
-or a two-column CSV also loads. `_reset_view` makes the next redraw autoscale (new data); otherwise
-`_redraw()` keeps the user's zoom (it restores the axis limits if the axes are not on autoscale).
+**Caricamento** (`process_file`): una cartella `.D` carica il `.uv` (`_load_uv`), i registri dello strumento
+(`_load_instrument`) ed esegue `_initial_extraction()` (lunghezza d'onda del primo segnale registrato, 4 nm,
+riferimento spento); i suoi `.ch` si caricano solo se File -> "Also load recorded channels" e' attivo (o se manca il
+`.uv`). Si carica anche un singolo `.ch` o un CSV a due colonne. `_reset_view` fa riscalare automaticamente il
+prossimo ridisegno (dati nuovi); altrimenti `_redraw()` conserva lo zoom dell'utente (ripristina i limiti degli assi
+se non sono in scala automatica).
 
-**Extraction** (the heart): `extract_wavelength(wl, S, center, bandwidth, ref, ref_bandwidth)` = overlap-weighted mean of the
-band minus the same for the reference, with the empirical `UV_OFFSET_NM`. Detector signal panel (`open_spectra`):
-`_sp_extract(False)` (*Update trace*, also Enter in a field) replaces **the selected extracted trace** in place
-(`_sp_target()`: the selected trace if it has `estr` and belongs to the dataset; else the last touched one,
-`_sp_live[ds]`); `_sp_extract(True)` (*Add as new*) adds one and selects it. Selecting a trace in the list
-(`_on_selection()`) loads its wavelength/bandwidth/reference into the panel. `open_multi_extraction()` is the
-"Several wavelengths" dialog (N rows, each with wavelength, bandwidth and an optional reference) over
-`extract_series()` (all or nothing).
+**Estrazione** (il cuore): `extract_wavelength(wl, S, center, bandwidth, ref, ref_bandwidth)` = media pesata per
+sovrapposizione della banda meno la stessa per il riferimento, con l'empirico `UV_OFFSET_NM`. Pannello del segnale del
+rivelatore (`open_spectra`): `_sp_extract(False)` (*Update trace*, anche Invio in un campo) sostituisce **la traccia
+estratta selezionata** al suo posto (`_sp_target()`: la traccia selezionata se ha `estr` e appartiene al dataset;
+altrimenti l'ultima toccata, `_sp_live[ds]`); `_sp_extract(True)` (*Add as new*) ne aggiunge una e la seleziona.
+Selezionare una traccia nella lista (`_on_selection()`) carica la sua lunghezza d'onda/banda/riferimento nel
+pannello. `open_multi_extraction()` e' il dialogo "Several wavelengths" (N righe, ognuna con lunghezza d'onda, banda e
+riferimento facoltativo) su `extract_series()` (tutto o niente).
 
-**Spectra.** Click on the chromatogram = spectrum at that time: decided on button *release* (moved < 5 px =
-click, so it also works with the toolbar's zoom/pan active; Shift+click works even with the checkbox off). Picked
-spectra live in `self._chosen_spectra` (`dataset, t, wl, y, color, visible, line`, plus the Tk `row`/`var`);
-the spectra window (`_sp_window`) lists them with a checkbox (`_sp_toggle`) and a remove cross
-(`_sp_remove`). The dashed pick lines on the chromatogram (`gid='marker'`) come from
-`_visible_markers()` / `_update_markers()`, without a full redraw (zoom kept) and are removed from saved
-figures (`_copy_figure`). Time-wavelength map: `_sp_map`.
+**Spettri.** Click sul cromatogramma = spettro a quel tempo: si decide al *rilascio* del tasto (mosso < 5 px = click,
+quindi funziona anche con zoom/pan della barra attivi; Maiusc+click funziona anche con la casella spenta). Gli
+spettri scelti stanno in `self._chosen_spectra` (`dataset, t, wl, y, color, visible, line`, piu' `row`/`var` di Tk);
+la finestra degli spettri (`_sp_window`) li elenca con una casella (`_sp_toggle`) e una crocetta di rimozione
+(`_sp_remove`). Le linee tratteggiate sul cromatogramma (`gid='marker'`) vengono da `_visible_markers()` /
+`_update_markers()`, senza ridisegno completo (zoom conservato), e si tolgono dalle figure salvate (`_copy_figure`).
+Mappa tempo-lunghezza d'onda: `_sp_map`.
 
-**Plot.** The trace legend is fixed at `upper right` (with `best` matplotlib recomputes it on every redraw and it
-jumps when the cursor line passes over it); the cursor readout sits right under it, anchored to the same edge.
+**Grafico.** La legenda delle tracce e' fissa in `upper right` (con `best` matplotlib la ricalcola a ogni ridisegno e
+salta quando la linea del cursore ci passa sopra); la lettura del cursore sta subito sotto, ancorata allo stesso bordo.
 
-**Peaks** (`open_peaks`, `_pk_apply`): scipy `find_peaks`, peak bases = nearest local minima on a
-Savitzky-Golay copy (scipy's `left_bases` can reach the start of the chromatogram), linear baseline, area in
-mAU*s. Close to ChemStation for isolated peaks (main peak 101%), 50-90% for overlapping/small ones: its
-integrator is not replicated. Also Smoothing, Trim, Normalize (each derived trace is a new entry and sets
-`self._dirty`).
+**Picchi** (`open_peaks`, `_pk_apply`): `find_peaks` di scipy, basi dei picchi = minimi locali piu' vicini su una
+copia Savitzky-Golay (le `left_bases` di scipy possono arrivare all'inizio del cromatogramma), baseline lineare, area
+in mAU*s. Vicino a ChemStation per i picchi isolati (picco principale 101%), 50-90% per quelli sovrapposti o piccoli:
+il suo integratore non e' replicato. Ci sono anche Smoothing, Trim, Normalize (ogni traccia derivata e' una nuova
+voce e imposta `self._dirty`).
 
-**Instrument data.** `read_diagnostics()` (LCDIAG.REG) and `read_acqres()` (ACQRES.REG) read the `.REG`
-registers; `read_folder_metadata()` adds Report00.CSV, RUN.LOG and the column/modules to the metadata (shown
-first: Sample, Date, Method, Column...). `open_instrument_curves()` is the stacked-curves window (grouped by unit);
-`instrument_table()` interpolates the slower signals onto the pump time base for the CSV export.
+**Dati dello strumento.** `read_diagnostics()` (LCDIAG.REG) e `read_acqres()` (ACQRES.REG) leggono i registri `.REG`;
+`read_folder_metadata()` aggiunge ai metadati Report00.CSV, RUN.LOG e colonna/moduli (mostrati per primi: Sample,
+Date, Method, Column...). `open_instrument_curves()` e' la finestra delle curve impilate (raggruppate per unita');
+`instrument_table()` interpola i segnali piu' lenti sulla base dei tempi della pompa per l'esportazione CSV.
 
-**Export / session** (File menu): `peaks_table()` / `spectra_table()` (only the ticked spectra) build the
-CSVs; `export_full_dad`; `export_instrument_curves`; `save_session` / `open_session` pickle
-`_session_data()` into a gzip `.hplcsession`; `_copy_figure()` makes the Origin-styled copy used by
-`save_figure_image`, `save_figure_pickle` and `open_figure_editor` (PlotStyleKit `plot_editor.pyw`, loaded by
-path). CSVs use `;` and latin-1.
+**Esportazione / sessione** (menu File): `peaks_table()` / `spectra_table()` (solo gli spettri spuntati) costruiscono
+i CSV; `export_full_dad`; `export_instrument_curves`; `save_session` / `open_session` salvano con pickle
+`_session_data()` in un `.hplcsession` gzip; `_copy_figure()` crea la copia in stile Origin usata da
+`save_figure_image`, `save_figure_pickle` e `open_figure_editor` (`plot_editor.pyw` di PlotStyleKit, caricato per
+percorso). I CSV usano `;` e latin-1.
 
-## ChemStation file formats (notes in Italian; all verified on one run, `009-0201.D`)
+## Formati dei file ChemStation (tutto verificato su una sola corsa, `009-0201.D`)
 
 Software: **Agilent ChemStation Rev. A.10.02 [1757]** (file `.ch` versione 30, `.uv` versione 31), "Instrument 1"
 con **DAD (G1315B)**, moduli serie 1100, solventi H2O+H3PO4 / ACN. Campione: 30/09/2026, metodo `POLIFENB.M`,
@@ -182,22 +185,23 @@ tabelle con testate (`ObjClass`, `Title`, `DataType`...) e dati. Little-endian.
   campi (ColLength, ColDiameter, ParticleSize) e' **dedotta** (ordine dei campi e valori tipici di una Hypersil ODS
   100 x 2.1 mm, 5 um), non verificata su altri file; un quarto double (68) non e' identificato e non viene mostrato.
 
-## Open points / ideas
+## Punti aperti / idee
 
-- Verify everything on more `.D` folders (other methods, columns, spectral ranges, ChemStation versions): so far
-  one run only.
-- Compare area/height computed here with `REPORTnn.CSV` (tolerance to decide); replicate ChemStation's integrator or
-  keep our own? Calibration with external standards, system suitability, peak purity (spectra on the peak),
-  spectral library, gradient (% B) overlay on the chromatogram on a secondary axis, batch extraction over a series of
-  `.D` folders: all asked about or considered, none done. Ask Francesco what his analyses are (here: polyphenols,
-  90 min gradient) before building them.
+- Verificare tutto su piu' cartelle `.D` (altri metodi, colonne, intervalli spettrali, versioni di ChemStation): finora
+  una sola corsa.
+- Confrontare area/altezza calcolate qui con `REPORTnn.CSV` (tolleranza da decidere); replicare l'integratore di
+  ChemStation o tenere il nostro? Calibrazione con standard esterni, idoneita' del sistema, purezza dei picchi
+  (spettri sul picco), libreria spettrale, sovrapposizione del gradiente (% B) sul cromatogramma su un asse
+  secondario, estrazione in batch su una serie di cartelle `.D`: tutto chiesto o considerato, niente fatto. Chiedere a
+  Francesco quali sono le sue analisi (qui: polifenoli, gradiente di 90 min) prima di costruirle.
 
-## Editing conventions (project)
-- Follow `..\CLAUDE.md`: everything in English (identifiers, comments, docstrings, UI and `messagebox` text,
-  tests), surgical edits. The code was translated from Italian to English in one pass (identifiers, comments,
-  messages, tests, the `example data/` folder). Only this file's format notes (sections below) stay in Italian.
-  External names from the sibling `PlotStyleKit` repo (`applica_rcparams`, `applica_stile_origin`,
-  `carica_figura`) are still Italian there and are called as they are.
-- Sessions saved before the translation (`.hplcsession` with Italian keys such as `cromatogrammi`) cannot be opened.
-- Test GUI features with real events (list selection via `<<ListboxSelect>>`, mouse events on the canvas), and look
-  at the result in a screenshot; the Tk tests must clean up their windows.
+## Convenzioni di modifica (progetto)
+- Seguire `..\CLAUDE.md`: codice, commenti, docstring, testi dell'interfaccia e dei `messagebox`, test, commit e
+  README in inglese; i `CLAUDE.md` in italiano; modifiche chirurgiche. Il codice di questo progetto e' stato tradotto
+  dall'italiano all'inglese in un unico passaggio (identificatori, commenti, messaggi, test, cartella `example data/`).
+- I nomi esterni del repo fratello `PlotStyleKit` (`applica_rcparams`, `applica_stile_origin`, `carica_figura`) sono
+  ancora in italiano li' e si chiamano cosi' come sono.
+- Le sessioni salvate prima della traduzione (`.hplcsession` con chiavi italiane come `cromatogrammi`) non si
+  possono aprire.
+- Provare le funzioni con eventi veri (selezione nella lista con `<<ListboxSelect>>`, eventi del mouse sul canvas) e
+  guardare il risultato in uno screenshot; i test Tk devono ripulire le proprie finestre.
