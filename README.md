@@ -16,7 +16,9 @@ time, look at the pressure and gradient the instrument recorded, integrate peaks
 loaded only if File -> "Also load recorded channels" is ticked.
 
 **Detector signal panel.** Set wavelength, bandwidth and an optional reference band (checkbox off = no
-reference). Enter or *Update trace* recomputes the trace; *Add as new* keeps a copy for comparison.
+reference). Enter or *Update trace* recomputes the extracted trace selected in the list; *Add as new* creates another
+one, which becomes the selected one. Click a trace in the list and its wavelength, bandwidth and reference
+come back into the panel, ready to edit.
 *Several wavelengths...* opens a dialog: choose how many traces you want and, for each, wavelength,
 bandwidth and an optional reference (every row has its own); all are extracted in one go.
 

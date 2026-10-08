@@ -214,7 +214,7 @@ class HPLCManager:
         fl.pack(fill=tk.X, padx=4)
         self.lista = tk.Listbox(fl, selectmode=tk.EXTENDED, height=6, exportselection=False)
         self.lista.pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.lista.bind('<<ListboxSelect>>', lambda e: self._aggiorna_metadati())
+        self.lista.bind('<<ListboxSelect>>', self._su_selezione)
         self.lista.bind('<Button-3>', self._menu_lista)
         fb = tk.Frame(p)
         fb.pack(fill=tk.X, padx=4, pady=2)
@@ -663,11 +663,16 @@ class HPLCManager:
             k += 1
         return '%s (%d)' % (nome, k)
 
-    def _aggiungi(self, nome, t, y, info, picchi_cs=None):
+    def _aggiungi(self, nome, t, y, info, picchi_cs=None, estr=None):
+        """Aggiunge una traccia. `estr` (solo per le tracce estratte dagli spettri DAD) sono i parametri
+        con cui e' stata calcolata: {'ds', 'l', 'b', 'rif', 'rb'}; selezionandola nella lista tornano
+        nel pannello, e 'Update trace' la modifica."""
         nome = self._nome_libero(nome)
         df = pd.DataFrame({'mAU': y}, index=pd.Index(t, name='Time (min)'))
         self.cromatogrammi[nome] = {'df': df, 'info': info, 'picchi': [],
                                     'picchi_cs': picchi_cs or [], 'nascosto': False}
+        if estr is not None:
+            self.cromatogrammi[nome]['estr'] = estr
         return nome
 
     def processa_file(self, path):
@@ -1230,8 +1235,9 @@ class HPLCManager:
     def _sp_estrai(self, nuova=False):
         """Estrae il cromatogramma alla lunghezza d'onda/banda/riferimento del pannello.
 
-        Di default aggiorna la traccia 'viva' di quel dataset (la sostituisce, nella stessa
-        posizione della lista); con nuova=True ne aggiunge una separata, che resta."""
+        Di default modifica la traccia estratta selezionata nella lista (la sostituisce nella stessa
+        posizione); se non ce n'e', l'ultima estratta; con nuova=True ne aggiunge una separata, che
+        diventa la selezionata e quindi quella che l'Update successivo modifica."""
         d = self._sp_dataset()
         if d is None:
             return
@@ -1255,24 +1261,69 @@ class HPLCManager:
         ds = self.var_sp_set.get()
         etichetta = self._etichetta_estrazione(l, b, rif, rb)
         info = self._info_estrazione(d, ds, etichetta)
-        vecchio = self._sp_live.get(ds)
-        if nuova or vecchio not in self.cromatogrammi:
-            nome = self._aggiungi('%s %s' % (ds, etichetta), d['t'], y, info)
-            if vecchio not in self.cromatogrammi:
-                self._sp_live[ds] = nome      # 'Add as new' non prende il posto della traccia viva
+        estr = {'ds': ds, 'l': l, 'b': b, 'rif': rif, 'rb': rb}
+        vecchio = None if nuova else self._sp_bersaglio(ds)
+        if vecchio is None:
+            nome = self._aggiungi('%s %s' % (ds, etichetta), d['t'], y, info, estr=estr)
         else:
-            # sostituisce la traccia viva mantenendo la sua posizione nella lista
+            # sostituisce la traccia selezionata mantenendo la sua posizione nella lista
             nome = '%s %s' % (ds, etichetta)
             if nome != vecchio:
                 nome = self._nome_libero(nome)
             df = pd.DataFrame({'mAU': y}, index=pd.Index(d['t'], name='Time (min)'))
-            nuovo = {'df': df, 'info': info, 'picchi': [], 'picchi_cs': [], 'nascosto': False}
+            nuovo = dict(self.cromatogrammi[vecchio], df=df, info=info, picchi=[], picchi_cs=[],
+                         nascosto=False, estr=estr)
             self.cromatogrammi = {(nome if k == vecchio else k): (nuovo if k == vecchio else v)
                                   for k, v in self.cromatogrammi.items()}
-            self._sp_live[ds] = nome
+        self._sp_live[ds] = nome          # l'ultima toccata: serve se non c'e' una selezione utile
         if nuova:
-            self._dirty = True        # la traccia 'viva' si ricalcola sempre: non serve esportarla
+            self._dirty = True            # una traccia 'viva' si ricalcola sempre: non serve esportarla
         self.aggiorna_vista()
+        self._seleziona_nome(nome)        # la traccia appena estratta/modificata diventa quella attiva
+
+    def _sp_bersaglio(self, ds):
+        """Traccia che 'Update trace' deve modificare: quella selezionata nella lista se e' una traccia
+        estratta dal dataset `ds`; altrimenti l'ultima estratta/modificata; None se non ce n'e'."""
+        sel = self._selezionati()
+        if len(sel) == 1:
+            e = self.cromatogrammi[sel[0]].get('estr')
+            if e and e['ds'] == ds:
+                return sel[0]
+        ultimo = self._sp_live.get(ds)
+        return ultimo if ultimo in self.cromatogrammi else None
+
+    def _seleziona_nome(self, nome):
+        """Seleziona nella lista la traccia `nome` (e aggiorna i metadati)."""
+        nomi = list(self.cromatogrammi)
+        if nome not in nomi:
+            return
+        i = nomi.index(nome)
+        self.lista.selection_clear(0, tk.END)
+        self.lista.selection_set(i)
+        self.lista.see(i)
+        self._aggiorna_metadati()
+
+    def _su_selezione(self, event=None):
+        """Cambio di selezione nella lista: metadati, e per una traccia estratta i suoi parametri
+        (lunghezza d'onda, banda, riferimento) tornano nei campi del pannello, pronti da modificare."""
+        self._aggiorna_metadati()
+        sel = self._selezionati()
+        if len(sel) != 1 or not hasattr(self, 'var_sp_l'):
+            return
+        e = self.cromatogrammi[sel[0]].get('estr')
+        if not e or e['ds'] not in self.spettri:
+            return
+        self.var_sp_set.set(e['ds'])
+        self.var_sp_l.set('%g' % e['l'])
+        self.var_sp_b.set('%g' % e['b'])
+        self.var_sp_uso_rif.set(e['rif'] is not None)
+        if e['rif'] is not None:
+            self.var_sp_rl.set('%g' % e['rif'])
+            self.var_sp_rb.set('%g' % e['rb'])
+        try:
+            self._sp_stato_rif()
+        except tk.TclError:           # pannello non (piu') costruito
+            pass
 
     def _disegna_marcatore(self, t, col):
         """Linea tratteggiata + etichetta del tempo sul cromatogramma (senza ridisegnare il resto,
@@ -1307,11 +1358,12 @@ class HPLCManager:
                 y = self.estrai_lambda(d['wl'], d['S'], l, b, rif, rb)
             except ValueError as e:
                 raise ValueError("Riga %d: %s" % (i, e))
-            calcolate.append((self._etichetta_estrazione(l, b, rif, rb), y))
+            calcolate.append((self._etichetta_estrazione(l, b, rif, rb), y,
+                              {'ds': ds, 'l': l, 'b': b, 'rif': rif, 'rb': rb}))
         nomi = []
-        for etichetta, y in calcolate:
+        for etichetta, y, estr in calcolate:
             nomi.append(self._aggiungi('%s %s' % (ds, etichetta), d['t'], y,
-                                       self._info_estrazione(d, ds, etichetta)))
+                                       self._info_estrazione(d, ds, etichetta), estr=estr))
         return nomi
 
     def apri_estrazione_multipla(self):

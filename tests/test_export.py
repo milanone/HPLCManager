@@ -112,6 +112,7 @@ class TestConApplicazione(unittest.TestCase):
 
     def test_export_picchi(self):
         n = [k for k in self.app.cromatogrammi if k.endswith('dad1A')][0]
+        self.app.lista.selection_clear(0, tk.END)       # un click sostituisce la selezione
         self.app.lista.selection_set(list(self.app.cromatogrammi).index(n))
         self.app.apri_picchi()
         self.app.var_prom.set('5')
