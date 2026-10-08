@@ -21,7 +21,7 @@ pythonw HPLCManager.pyw [file_or_.D_folder]
 py -m unittest discover -s tests -v     # real-sample tests are skipped if the sample folder is missing
 ```
 
-Sample data: `campioni di esempio/009-0201.D` (gitignored: real data, never commit). Tk tests need a screen.
+Sample data: `example data/009-0201.D` (gitignored: real data, never commit). Tk tests need a screen.
 Screenshots for the README are taken from the real program (`ImageGrab` on the window, window topmost) and
 checked before publishing.
 
@@ -32,53 +32,53 @@ LabSpectrumManager (each pane given an explicit `width` and `stretch`: left tabl
 elastic, right panel 400 px fixed): data table (left), plot with toolbar and cursor readout (centre), scrollable
 right panel (`self.f_right_inner`: chromatogram list, metadata, tool buttons, tool panel in `self.f_tool_host`).
 
-**Data model.** `self.cromatogrammi = {name: {'df': DataFrame (index = time in min, column 'mAU'), 'info': {...},
-'picchi': [...], 'picchi_cs': [...], 'nascosto': bool, 'estr': {...}}}`. `picchi` = peaks computed here,
-`picchi_cs` = peaks from the ChemStation `REPORTnn.CSV` of the same folder, `estr` (only for traces extracted from
-the spectra) = `{ds, l, b, rif, rb}`, the parameters it was computed with. `self.spettri` = `{folder name: {'t',
-'wl', 'S', 'info'}}` (DAD cube), `self.strumento` = `{folder name: {'segnali', 'moduli', 'colonna'}}`.
+**Data model.** `self.chromatograms = {name: {'df': DataFrame (index = time in min, column 'mAU'), 'info': {...},
+'peaks': [...], 'cs_peaks': [...], 'hidden': bool, 'estr': {...}}}`. `peaks` = peaks computed here,
+`cs_peaks` = peaks from the ChemStation `REPORTnn.CSV` of the same folder, `estr` (only for traces extracted from
+the spectra) = `{ds, l, b, ref, rb}`, the parameters it was computed with. `self.spectra` = `{folder name: {'t',
+'wl', 'S', 'info'}}` (DAD cube), `self.instrument` = `{folder name: {'signals', 'modules', 'column'}}`.
 
-**Loading** (`processa_file`): a `.D` folder loads `.uv` (`_carica_uv`), the instrument registers
-(`_carica_strumento`), and runs `_estrazione_iniziale()` (first recorded signal's wavelength, 4 nm, reference off);
+**Loading** (`process_file`): a `.D` folder loads `.uv` (`_load_uv`), the instrument registers
+(`_load_instrument`), and runs `_initial_extraction()` (first recorded signal's wavelength, 4 nm, reference off);
 its `.ch` files load only if File -> "Also load recorded channels" is on (or if there is no `.uv`). A single `.ch`
-or a two-column CSV also loads. `_reset_vista` makes the next redraw autoscale (new data); otherwise
-`_ridisegna()` keeps the user's zoom (it restores the axis limits if the axes are not on autoscale).
+or a two-column CSV also loads. `_reset_view` makes the next redraw autoscale (new data); otherwise
+`_redraw()` keeps the user's zoom (it restores the axis limits if the axes are not on autoscale).
 
-**Extraction** (the heart): `estrai_lambda(wl, S, centro, banda, rif, banda_rif)` = overlap-weighted mean of the
-band minus the same for the reference, with the empirical `UV_OFFSET_NM`. Detector signal panel (`apri_spettri`):
-`_sp_estrai(False)` (*Update trace*, also Enter in a field) replaces **the selected extracted trace** in place
-(`_sp_bersaglio()`: the selected trace if it has `estr` and belongs to the dataset; else the last touched one,
-`_sp_live[ds]`); `_sp_estrai(True)` (*Add as new*) adds one and selects it. Selecting a trace in the list
-(`_su_selezione()`) loads its wavelength/bandwidth/reference into the panel. `apri_estrazione_multipla()` is the
+**Extraction** (the heart): `extract_wavelength(wl, S, center, bandwidth, ref, ref_bandwidth)` = overlap-weighted mean of the
+band minus the same for the reference, with the empirical `UV_OFFSET_NM`. Detector signal panel (`open_spectra`):
+`_sp_extract(False)` (*Update trace*, also Enter in a field) replaces **the selected extracted trace** in place
+(`_sp_target()`: the selected trace if it has `estr` and belongs to the dataset; else the last touched one,
+`_sp_live[ds]`); `_sp_extract(True)` (*Add as new*) adds one and selects it. Selecting a trace in the list
+(`_on_selection()`) loads its wavelength/bandwidth/reference into the panel. `open_multi_extraction()` is the
 "Several wavelengths" dialog (N rows, each with wavelength, bandwidth and an optional reference) over
-`estrai_serie()` (all or nothing).
+`extract_series()` (all or nothing).
 
 **Spectra.** Click on the chromatogram = spectrum at that time: decided on button *release* (moved < 5 px =
 click, so it also works with the toolbar's zoom/pan active; Shift+click works even with the checkbox off). Picked
-spectra live in `self._spettri_scelti` (`dataset, t, wl, y, colore, visibile, linea`, plus the Tk `riga`/`var`);
-the spectra window (`_sp_finestra`) lists them with a checkbox (`_sp_spunta`) and a remove cross
-(`_sp_rimuovi`). The dashed pick lines on the chromatogram (`gid='marcatore'`) come from
-`_marcatori_visibili()` / `_aggiorna_marcatori()`, without a full redraw (zoom kept) and are removed from saved
-figures (`_copia_figura`). Time-wavelength map: `_sp_mappa`.
+spectra live in `self._chosen_spectra` (`dataset, t, wl, y, color, visible, line`, plus the Tk `row`/`var`);
+the spectra window (`_sp_window`) lists them with a checkbox (`_sp_toggle`) and a remove cross
+(`_sp_remove`). The dashed pick lines on the chromatogram (`gid='marker'`) come from
+`_visible_markers()` / `_update_markers()`, without a full redraw (zoom kept) and are removed from saved
+figures (`_copy_figure`). Time-wavelength map: `_sp_map`.
 
 **Plot.** The trace legend is fixed at `upper right` (with `best` matplotlib recomputes it on every redraw and it
 jumps when the cursor line passes over it); the cursor readout sits right under it, anchored to the same edge.
 
-**Peaks** (`apri_picchi`, `_pk_applica`): scipy `find_peaks`, peak bases = nearest local minima on a
+**Peaks** (`open_peaks`, `_pk_apply`): scipy `find_peaks`, peak bases = nearest local minima on a
 Savitzky-Golay copy (scipy's `left_bases` can reach the start of the chromatogram), linear baseline, area in
 mAU*s. Close to ChemStation for isolated peaks (main peak 101%), 50-90% for overlapping/small ones: its
 integrator is not replicated. Also Smoothing, Trim, Normalize (each derived trace is a new entry and sets
 `self._dirty`).
 
-**Instrument data.** `leggi_diagnostica()` (LCDIAG.REG) and `leggi_acqres()` (ACQRES.REG) read the `.REG`
-registers; `leggi_metadati_cartella()` adds Report00.CSV, RUN.LOG and the column/modules to the metadata (shown
-first: Sample, Date, Method, Column...). `apri_curve_strumento()` is the stacked-curves window (grouped by unit);
-`tabella_strumento()` interpolates the slower signals onto the pump time base for the CSV export.
+**Instrument data.** `read_diagnostics()` (LCDIAG.REG) and `read_acqres()` (ACQRES.REG) read the `.REG`
+registers; `read_folder_metadata()` adds Report00.CSV, RUN.LOG and the column/modules to the metadata (shown
+first: Sample, Date, Method, Column...). `open_instrument_curves()` is the stacked-curves window (grouped by unit);
+`instrument_table()` interpolates the slower signals onto the pump time base for the CSV export.
 
-**Export / session** (File menu): `tabella_picchi()` / `tabella_spettri()` (only the ticked spectra) build the
-CSVs; `esporta_dad_completo`; `esporta_curve_strumento`; `salva_sessione` / `apri_sessione` pickle
-`_dati_sessione()` into a gzip `.hplcsession`; `_copia_figura()` makes the Origin-styled copy used by
-`salva_figura_immagine`, `salva_figura_pickle` and `apri_editor_figura` (PlotStyleKit `plot_editor.pyw`, loaded by
+**Export / session** (File menu): `peaks_table()` / `spectra_table()` (only the ticked spectra) build the
+CSVs; `export_full_dad`; `export_instrument_curves`; `save_session` / `open_session` pickle
+`_session_data()` into a gzip `.hplcsession`; `_copy_figure()` makes the Origin-styled copy used by
+`save_figure_image`, `save_figure_pickle` and `open_figure_editor` (PlotStyleKit `plot_editor.pyw`, loaded by
 path). CSVs use `;` and latin-1.
 
 ## ChemStation file formats (notes in Italian; all verified on one run, `009-0201.D`)
@@ -136,7 +136,7 @@ media 278-282 nm meno media 310-410 nm). **Little-endian** (al contrario dei `.c
   12000, 40), 8 byte non decodificati (contengono `0x50/0x51`, `0x04`, `0x190`=400 ms), poi i valori.
 - Valori: come nei `.ch`, little-endian: `int16` = delta dal valore precedente (parte da 0 a ogni record),
   `0x8000` + `int32` = valore assoluto. Tutti i 13493 record danno esattamente 201 valori e consumano esattamente i
-  byte dichiarati. Diviso **2000** = mAU. `leggi_uv()` ci mette ~1 s (percorso veloce numpy per i record senza
+  byte dichiarati. Diviso **2000** = mAU. `read_uv()` ci mette ~1 s (percorso veloce numpy per i record senza
   valori assoluti).
 - Dopo l'ultimo record c'e' una coda di ~135 kB (forse un indice, ~10 byte per spettro): non letta.
 - **Tempo**: `.uv` e `.ch` usano lo stesso asse in ms; il `.ch` parte a -2560 ms, il `.uv` a 240 ms, quindi
@@ -193,6 +193,11 @@ tabelle con testate (`ObjClass`, `Title`, `DataType`...) e dati. Little-endian.
   90 min gradient) before building them.
 
 ## Editing conventions (project)
-- Follow `..\CLAUDE.md` (surgical edits, Italian identifiers/comments, English UI text, Italian `messagebox` body).
+- Follow `..\CLAUDE.md`: everything in English (identifiers, comments, docstrings, UI and `messagebox` text,
+  tests), surgical edits. The code was translated from Italian to English in one pass (identifiers, comments,
+  messages, tests, the `example data/` folder). Only this file's format notes (sections below) stay in Italian.
+  External names from the sibling `PlotStyleKit` repo (`applica_rcparams`, `applica_stile_origin`,
+  `carica_figura`) are still Italian there and are called as they are.
+- Sessions saved before the translation (`.hplcsession` with Italian keys such as `cromatogrammi`) cannot be opened.
 - Test GUI features with real events (list selection via `<<ListboxSelect>>`, mouse events on the canvas), and look
   at the result in a screenshot; the Tk tests must clean up their windows.

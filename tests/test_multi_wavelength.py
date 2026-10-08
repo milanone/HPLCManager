@@ -1,8 +1,8 @@
-"""Test dell'estrazione di piu' lunghezze d'onda in un colpo (dialogo 'Several wavelengths').
+"""Test of the extraction of several wavelengths in one go (the 'Several wavelengths' dialog).
 
-`estrai_serie` si prova senza finestra su spettri sintetici; il dialogo vero (numero di righe,
-lunghezze d'onda, riferimento per riga, errori) gira con una finestra Tk nascosta sul campione
-'campioni di esempio/009-0201.D' (gitignorato), se presente.
+`extract_series` is tried without a window on synthetic spectra; the real dialog (number of rows,
+wavelengths, reference per row, errors) runs with a hidden Tk window on the sample
+'example data/009-0201.D' (gitignored), if present.
 
     py -m unittest discover -s tests -v
 """
@@ -20,48 +20,48 @@ spec = importlib.util.spec_from_file_location(
 hplc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(hplc)
 
-CAMPIONE = os.path.join(HERE, "..", "campioni di esempio", "009-0201.D")
+SAMPLE = os.path.join(HERE, "..", "example data", "009-0201.D")
 
 
-def app_sintetica():
+def synthetic_app():
     app = hplc.HPLCManager.__new__(hplc.HPLCManager)
     wl = 200 + 2 * np.arange(201, dtype=float)
     t = np.arange(10) / 60.0
-    S = np.outer(np.arange(10) + 1.0, np.ones(201))      # spettro piatto, scala col tempo
-    S[:, wl > 400] = 0.0                                    # sopra 400 nm vale 0
-    app.cromatogrammi = {}
-    app.spettri = {'D': {'t': t, 'wl': wl, 'S': S, 'info': {'Sample': 'X', 'Spectra': 's', 'Version': '31'}}}
+    S = np.outer(np.arange(10) + 1.0, np.ones(201))      # flat spectrum, scales with time
+    S[:, wl > 400] = 0.0                                    # above 400 nm it is 0
+    app.chromatograms = {}
+    app.spectra = {'D': {'t': t, 'wl': wl, 'S': S, 'info': {'Sample': 'X', 'Spectra': 's', 'Version': '31'}}}
     return app
 
 
-class TestEstraiSerie(unittest.TestCase):
-    def test_piu_tracce(self):
-        app = app_sintetica()
-        nomi = app.estrai_serie('D', [(250, 4, None, None), (300, 8, 500, 20), (350, 4, 500, 20)])
-        self.assertEqual(nomi, ['D 250,4 no ref', 'D 300,8 ref 500,20', 'D 350,4 ref 500,20'])
-        self.assertEqual(list(app.cromatogrammi), nomi)
-        # spettro piatto = (i+1) fino a 400 nm, 0 oltre: con riferimento a 500 nm il segnale non cambia
-        for n in nomi:
-            np.testing.assert_allclose(app.cromatogrammi[n]['df']['mAU'], np.arange(10) + 1.0)
-        self.assertEqual(app.cromatogrammi[nomi[0]]['info']['Sample'], 'X')
-        self.assertNotIn('Spectra', app.cromatogrammi[nomi[0]]['info'])
+class TestExtractSeries(unittest.TestCase):
+    def test_several_traces(self):
+        app = synthetic_app()
+        names = app.extract_series('D', [(250, 4, None, None), (300, 8, 500, 20), (350, 4, 500, 20)])
+        self.assertEqual(names, ['D 250,4 no ref', 'D 300,8 ref 500,20', 'D 350,4 ref 500,20'])
+        self.assertEqual(list(app.chromatograms), names)
+        # flat spectrum = (i+1) up to 400 nm, 0 beyond: with a reference at 500 nm the signal does not change
+        for n in names:
+            np.testing.assert_allclose(app.chromatograms[n]['df']['mAU'], np.arange(10) + 1.0)
+        self.assertEqual(app.chromatograms[names[0]]['info']['Sample'], 'X')
+        self.assertNotIn('Spectra', app.chromatograms[names[0]]['info'])
 
-    def test_tutto_o_niente(self):
-        app = app_sintetica()
-        with self.assertRaisesRegex(ValueError, "Riga 2"):
-            app.estrai_serie('D', [(250, 4, None, None), (900, 4, None, None)])   # fuori dallo spettro
-        self.assertEqual(app.cromatogrammi, {})
-        with self.assertRaisesRegex(ValueError, "Riga 1"):
-            app.estrai_serie('D', [(250, 0, None, None)])                         # banda nulla
+    def test_all_or_nothing(self):
+        app = synthetic_app()
+        with self.assertRaisesRegex(ValueError, "Row 2"):
+            app.extract_series('D', [(250, 4, None, None), (900, 4, None, None)])   # outside the spectrum
+        self.assertEqual(app.chromatograms, {})
+        with self.assertRaisesRegex(ValueError, "Row 1"):
+            app.extract_series('D', [(250, 0, None, None)])                         # zero bandwidth
 
-    def test_stessa_lunghezza_due_volte(self):
-        app = app_sintetica()
-        nomi = app.estrai_serie('D', [(250, 4, None, None), (250, 4, None, None)])
-        self.assertEqual(len(set(nomi)), 2)       # i nomi restano distinti
+    def test_same_wavelength_twice(self):
+        app = synthetic_app()
+        names = app.extract_series('D', [(250, 4, None, None), (250, 4, None, None)])
+        self.assertEqual(len(set(names)), 2)       # the names stay distinct
 
 
-@unittest.skipUnless(os.path.isdir(CAMPIONE), "campione 009-0201.D non presente")
-class TestDialogo(unittest.TestCase):
+@unittest.skipUnless(os.path.isdir(SAMPLE), "sample 009-0201.D not present")
+class TestDialog(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         try:
@@ -76,68 +76,68 @@ class TestDialogo(unittest.TestCase):
 
     def setUp(self):
         self.app = hplc.HPLCManager(self.root)
-        self.app.processa_file(CAMPIONE)
-        self.app.aggiorna_vista()
+        self.app.process_file(SAMPLE)
+        self.app.refresh_view()
 
     def tearDown(self):
         for w in self.root.winfo_children():
             w.destroy()
 
-    def riempi(self, top, valori):
-        top._var_n.set(len(valori))
-        top._imposta_n()
-        self.assertEqual(len(top._righe), len(valori))
-        for r, (l, b, rif) in zip(top._righe, valori):
+    def fill_in(self, top, values):
+        top._var_n.set(len(values))
+        top._set_n()
+        self.assertEqual(len(top._rows), len(values))
+        for r, (l, b, ref) in zip(top._rows, values):
             r['l'].set(l)
             r['b'].set(b)
-            r['usa'].set(rif is not None)
-            if rif is not None:
-                r['rl'].set(rif[0])
-                r['rb'].set(rif[1])
+            r['use'].set(ref is not None)
+            if ref is not None:
+                r['rl'].set(ref[0])
+                r['rb'].set(ref[1])
 
-    def test_numero_e_valori_scelti_dall_utente(self):
-        prima = len(self.app.cromatogrammi)
-        top = self.app.apri_estrazione_multipla()
-        self.riempi(top, [('254', '4', None), ('280', '4', ('360', '100')), ('310,5', '8', None), ('350', '4', ('400', '20'))])
+    def test_number_and_values_chosen_by_user(self):
+        before = len(self.app.chromatograms)
+        top = self.app.open_multi_extraction()
+        self.fill_in(top, [('254', '4', None), ('280', '4', ('360', '100')), ('310,5', '8', None), ('350', '4', ('400', '20'))])
         with mock.patch.object(hplc.messagebox, 'showerror') as err:
-            top._estrai()
+            top._extract()
         self.assertFalse(err.called, err.call_args)
-        nomi = list(self.app.cromatogrammi)
-        self.assertEqual(len(nomi) - prima, 4)
-        self.assertEqual(nomi[prima:], ['009-0201 254,4 no ref', '009-0201 280,4 ref 360,100',
+        names = list(self.app.chromatograms)
+        self.assertEqual(len(names) - before, 4)
+        self.assertEqual(names[before:], ['009-0201 254,4 no ref', '009-0201 280,4 ref 360,100',
                                         '009-0201 310.5,8 no ref', '009-0201 350,4 ref 400,20'])
-        # la traccia 280/4 con riferimento 360/100 coincide con il canale registrato dad1A.ch
-        t, y, _ = self.app.leggi_ch(os.path.join(CAMPIONE, 'dad1A.ch'))
-        mia = self.app.cromatogrammi['009-0201 280,4 ref 360,100']['df']['mAU'].to_numpy()
-        self.assertLess(np.std(mia - y[7:7 + len(mia)]), 0.3)
+        # the 280/4 trace with reference 360/100 coincides with the recorded channel dad1A.ch
+        t, y, _ = self.app.read_ch(os.path.join(SAMPLE, 'dad1A.ch'))
+        mine = self.app.chromatograms['009-0201 280,4 ref 360,100']['df']['mAU'].to_numpy()
+        self.assertLess(np.std(mine - y[7:7 + len(mine)]), 0.3)
         self.assertTrue(self.app._dirty)
 
-    def test_errore_non_aggiunge_nulla(self):
-        prima = list(self.app.cromatogrammi)
-        top = self.app.apri_estrazione_multipla()
-        self.riempi(top, [('254', '4', None), ('', '4', None)])      # seconda riga vuota
+    def test_error_adds_nothing(self):
+        before = list(self.app.chromatograms)
+        top = self.app.open_multi_extraction()
+        self.fill_in(top, [('254', '4', None), ('', '4', None)])      # second row empty
         with mock.patch.object(hplc.messagebox, 'showerror') as err:
-            top._estrai()
+            top._extract()
         self.assertTrue(err.called)
-        self.assertIn("Riga 2", err.call_args[0][1])
-        self.assertEqual(list(self.app.cromatogrammi), prima)
-        self.assertTrue(top.winfo_exists())                         # il dialogo resta aperto per correggere
+        self.assertIn("Row 2", err.call_args[0][1])
+        self.assertEqual(list(self.app.chromatograms), before)
+        self.assertTrue(top.winfo_exists())                         # the dialog stays open so it can be corrected
 
-    def test_riapre_con_gli_ultimi_valori(self):
-        top = self.app.apri_estrazione_multipla()
-        self.riempi(top, [('254', '4', None), ('280', '6', ('360', '100'))])
+    def test_reopens_with_last_values(self):
+        top = self.app.open_multi_extraction()
+        self.fill_in(top, [('254', '4', None), ('280', '6', ('360', '100'))])
         with mock.patch.object(hplc.messagebox, 'showerror'):
-            top._estrai()
-        top2 = self.app.apri_estrazione_multipla()
-        self.assertEqual(len(top2._righe), 2)
-        self.assertEqual([r['l'].get() for r in top2._righe], ['254', '280'])
-        self.assertTrue(top2._righe[1]['usa'].get())
-        self.assertEqual(top2._righe[1]['b'].get(), '6')
+            top._extract()
+        top2 = self.app.open_multi_extraction()
+        self.assertEqual(len(top2._rows), 2)
+        self.assertEqual([r['l'].get() for r in top2._rows], ['254', '280'])
+        self.assertTrue(top2._rows[1]['use'].get())
+        self.assertEqual(top2._rows[1]['b'].get(), '6')
 
-    def test_senza_spettri(self):
-        self.app.spettri.clear()
+    def test_without_spectra(self):
+        self.app.spectra.clear()
         with mock.patch.object(hplc.messagebox, 'showinfo') as info:
-            self.assertIsNone(self.app.apri_estrazione_multipla())
+            self.assertIsNone(self.app.open_multi_extraction())
         self.assertTrue(info.called)
 
 

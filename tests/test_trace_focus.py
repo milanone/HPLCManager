@@ -1,8 +1,8 @@
-"""Test: la traccia estratta selezionata nella lista e' quella che 'Update trace' modifica.
+"""Test: the extracted trace selected in the list is the one that 'Update trace' modifies.
 
-Riproduce la sequenza d'uso: estrai una traccia, aggiungine un'altra con 'Add as new', cambia
-lunghezza d'onda o banda e premi Update: deve cambiare la traccia attiva, non sempre la prima.
-La selezione nella lista e' quella vera (evento <<ListboxSelect>>).
+Reproduces the usage sequence: extract a trace, add another with 'Add as new', change
+wavelength or bandwidth and press Update: the active trace must change, not always the first.
+The selection in the list is the real one (<<ListboxSelect>> event).
 
     py -m unittest discover -s tests -v
 """
@@ -20,11 +20,11 @@ spec = importlib.util.spec_from_file_location(
 hplc = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(hplc)
 
-CAMPIONE = os.path.join(HERE, "..", "campioni di esempio", "009-0201.D")
+SAMPLE = os.path.join(HERE, "..", "example data", "009-0201.D")
 
 
-@unittest.skipUnless(os.path.isdir(CAMPIONE), "campione 009-0201.D non presente")
-class TestTracciaAttiva(unittest.TestCase):
+@unittest.skipUnless(os.path.isdir(SAMPLE), "sample 009-0201.D not present")
+class TestActiveTrace(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         try:
@@ -39,125 +39,125 @@ class TestTracciaAttiva(unittest.TestCase):
 
     def setUp(self):
         self.app = hplc.HPLCManager(self.root)
-        self.app.processa_file(CAMPIONE)
-        self.app.aggiorna_vista()
+        self.app.process_file(SAMPLE)
+        self.app.refresh_view()
         self.root.update()
 
     def tearDown(self):
         for w in self.root.winfo_children():
             w.destroy()
 
-    def nomi(self):
-        return list(self.app.cromatogrammi)
+    def names(self):
+        return list(self.app.chromatograms)
 
-    def seleziona(self, i):
-        """Selezione vera nella lista: come un click sulla riga i."""
-        self.app.lista.selection_clear(0, tk.END)
-        self.app.lista.selection_set(i)
-        self.app.lista.event_generate('<<ListboxSelect>>')
+    def select_row(self, i):
+        """Real selection in the list: like a click on row i."""
+        self.app.listbox.selection_clear(0, tk.END)
+        self.app.listbox.selection_set(i)
+        self.app.listbox.event_generate('<<ListboxSelect>>')
         self.root.update()
 
-    def imposta(self, l=None, b=None, rif=None):
+    def set_params(self, l=None, b=None, ref=None):
         if l is not None:
             self.app.var_sp_l.set(str(l))
         if b is not None:
             self.app.var_sp_b.set(str(b))
-        if rif is not None:
-            self.app.var_sp_uso_rif.set(rif is not False)
-            if rif is not False:
-                self.app.var_sp_rl.set(str(rif[0]))
-                self.app.var_sp_rb.set(str(rif[1]))
-            self.app._sp_stato_rif()
+        if ref is not None:
+            self.app.var_sp_use_ref.set(ref is not False)
+            if ref is not False:
+                self.app.var_sp_rl.set(str(ref[0]))
+                self.app.var_sp_rb.set(str(ref[1]))
+            self.app._sp_ref_state()
 
-    def test_sequenza_dell_utente(self):
-        # prima traccia: 280/4, senza riferimento (quella creata all'apertura)
-        self.assertEqual(self.nomi(), ['009-0201 280,4 no ref'])
-        # seconda: 254/4 con Add as new
-        self.imposta(l=254)
-        self.app._sp_estrai(True)
-        self.assertEqual(self.nomi(), ['009-0201 280,4 no ref', '009-0201 254,4 no ref'])
-        # la nuova e' la selezionata: Update ne cambia la lunghezza d'onda, la prima non si tocca
-        self.assertEqual(self.app._selezionati(), ['009-0201 254,4 no ref'])
-        prima = self.app.cromatogrammi['009-0201 280,4 no ref']['df']['mAU'].to_numpy().copy()
-        self.imposta(l=300)
-        self.app._sp_estrai(False)
-        self.assertEqual(self.nomi(), ['009-0201 280,4 no ref', '009-0201 300,4 no ref'])
-        np.testing.assert_array_equal(self.app.cromatogrammi['009-0201 280,4 no ref']['df']['mAU'], prima)
-        # resta selezionata quella modificata: un secondo Update (banda) agisce ancora su di lei
-        self.assertEqual(self.app._selezionati(), ['009-0201 300,4 no ref'])
-        self.imposta(b=8)
-        self.app._sp_estrai(False)
-        self.assertEqual(self.nomi(), ['009-0201 280,4 no ref', '009-0201 300,8 no ref'])
+    def test_user_sequence(self):
+        # first trace: 280/4, no reference (the one created on opening)
+        self.assertEqual(self.names(), ['009-0201 280,4 no ref'])
+        # second: 254/4 with Add as new
+        self.set_params(l=254)
+        self.app._sp_extract(True)
+        self.assertEqual(self.names(), ['009-0201 280,4 no ref', '009-0201 254,4 no ref'])
+        # the new one is selected: Update changes its wavelength, the first is not touched
+        self.assertEqual(self.app._selected(), ['009-0201 254,4 no ref'])
+        before = self.app.chromatograms['009-0201 280,4 no ref']['df']['mAU'].to_numpy().copy()
+        self.set_params(l=300)
+        self.app._sp_extract(False)
+        self.assertEqual(self.names(), ['009-0201 280,4 no ref', '009-0201 300,4 no ref'])
+        np.testing.assert_array_equal(self.app.chromatograms['009-0201 280,4 no ref']['df']['mAU'], before)
+        # the modified one stays selected: a second Update (bandwidth) still acts on it
+        self.assertEqual(self.app._selected(), ['009-0201 300,4 no ref'])
+        self.set_params(b=8)
+        self.app._sp_extract(False)
+        self.assertEqual(self.names(), ['009-0201 280,4 no ref', '009-0201 300,8 no ref'])
 
-    def test_selezionare_una_traccia_ricarica_i_parametri(self):
-        self.imposta(l=254, b=8, rif=(400, 20))
-        self.app._sp_estrai(True)                         # 254/8 con riferimento 400/20
-        self.imposta(l=320, b=4, rif=False)
-        self.app._sp_estrai(True)                         # 320/4 senza riferimento
-        self.assertEqual(len(self.nomi()), 3)
-        self.seleziona(1)                                 # click sulla seconda traccia
+    def test_selecting_a_trace_reloads_the_parameters(self):
+        self.set_params(l=254, b=8, ref=(400, 20))
+        self.app._sp_extract(True)                         # 254/8 with reference 400/20
+        self.set_params(l=320, b=4, ref=False)
+        self.app._sp_extract(True)                         # 320/4 without reference
+        self.assertEqual(len(self.names()), 3)
+        self.select_row(1)                                 # click on the second trace
         self.assertEqual((self.app.var_sp_l.get(), self.app.var_sp_b.get()), ('254', '8'))
-        self.assertTrue(self.app.var_sp_uso_rif.get())
+        self.assertTrue(self.app.var_sp_use_ref.get())
         self.assertEqual((self.app.var_sp_rl.get(), self.app.var_sp_rb.get()), ('400', '20'))
         self.assertEqual(str(self.app.e_rl.cget('state')), 'normal')
-        self.seleziona(2)                                 # terza: senza riferimento
+        self.select_row(2)                                 # third: without reference
         self.assertEqual(self.app.var_sp_l.get(), '320')
-        self.assertFalse(self.app.var_sp_uso_rif.get())
+        self.assertFalse(self.app.var_sp_use_ref.get())
         self.assertEqual(str(self.app.e_rl.cget('state')), 'disabled')
-        self.seleziona(0)                                 # prima
+        self.select_row(0)                                 # first
         self.assertEqual((self.app.var_sp_l.get(), self.app.var_sp_b.get()), ('280', '4'))
 
-    def test_modifica_la_traccia_cliccata_non_la_prima(self):
-        self.imposta(l=254)
-        self.app._sp_estrai(True)
-        self.imposta(l=320)
-        self.app._sp_estrai(True)                         # tre tracce: 280, 254, 320
-        self.seleziona(1)                                 # torno sulla seconda (254)
-        self.imposta(l=260)
-        self.app._sp_estrai(False)
-        self.assertEqual(self.nomi(), ['009-0201 280,4 no ref', '009-0201 260,4 no ref',
+    def test_modifies_the_clicked_trace_not_the_first(self):
+        self.set_params(l=254)
+        self.app._sp_extract(True)
+        self.set_params(l=320)
+        self.app._sp_extract(True)                         # three traces: 280, 254, 320
+        self.select_row(1)                                 # back to the second (254)
+        self.set_params(l=260)
+        self.app._sp_extract(False)
+        self.assertEqual(self.names(), ['009-0201 280,4 no ref', '009-0201 260,4 no ref',
                                        '009-0201 320,4 no ref'])
-        self.assertEqual(self.app._selezionati(), ['009-0201 260,4 no ref'])
+        self.assertEqual(self.app._selected(), ['009-0201 260,4 no ref'])
 
-    def test_serie_di_lunghezze_d_onda(self):
-        nomi = self.app.estrai_serie('009-0201', [(254, 4, None, None), (280, 4, 360, 100)])
-        self.assertEqual(self.app.cromatogrammi[nomi[1]]['estr'],
-                         {'ds': '009-0201', 'l': 280, 'b': 4, 'rif': 360, 'rb': 100})
-        self.app.aggiorna_vista()
-        self.seleziona(self.nomi().index(nomi[1]))
-        self.assertTrue(self.app.var_sp_uso_rif.get())
+    def test_wavelength_series(self):
+        names = self.app.extract_series('009-0201', [(254, 4, None, None), (280, 4, 360, 100)])
+        self.assertEqual(self.app.chromatograms[names[1]]['estr'],
+                         {'ds': '009-0201', 'l': 280, 'b': 4, 'ref': 360, 'rb': 100})
+        self.app.refresh_view()
+        self.select_row(self.names().index(names[1]))
+        self.assertTrue(self.app.var_sp_use_ref.get())
         self.assertEqual(self.app.var_sp_l.get(), '280')
-        # Update sulla selezionata della serie: cambia lei e solo lei
-        self.imposta(l=300)
-        self.app._sp_estrai(False)
-        self.assertIn('009-0201 300,4 ref 360,100', self.nomi())
-        self.assertIn('009-0201 254,4 no ref', self.nomi())
-        self.assertIn('009-0201 280,4 no ref', self.nomi())          # la prima, intatta
+        # Update on the selected one of the series: it changes and only it
+        self.set_params(l=300)
+        self.app._sp_extract(False)
+        self.assertIn('009-0201 300,4 ref 360,100', self.names())
+        self.assertIn('009-0201 254,4 no ref', self.names())
+        self.assertIn('009-0201 280,4 no ref', self.names())          # the first, untouched
 
-    def test_traccia_non_estratta_cade_sull_ultima(self):
-        # con un canale registrato selezionato (non estratto dagli spettri) Update non lo tocca
-        self.app.var_includi_ch.set(True)
+    def test_non_extracted_trace_falls_back_to_the_last(self):
+        # with a recorded channel selected (not extracted from the spectra) Update does not touch it
+        self.app.var_include_ch.set(True)
         self.app.clear_all()
-        self.app.processa_file(CAMPIONE)
-        self.app.aggiorna_vista()
-        nomi = self.nomi()
-        canale = next(n for n in nomi if n.endswith('dad1A'))
-        prima = self.app.cromatogrammi[canale]['df']['mAU'].to_numpy().copy()
-        self.seleziona(nomi.index(canale))
-        self.imposta(l=300)
-        self.app._sp_estrai(False)
-        np.testing.assert_array_equal(self.app.cromatogrammi[canale]['df']['mAU'], prima)
-        self.assertTrue(any(n.endswith('300,4 no ref') for n in self.nomi()))
+        self.app.process_file(SAMPLE)
+        self.app.refresh_view()
+        names = self.names()
+        channel = next(n for n in names if n.endswith('dad1A'))
+        before = self.app.chromatograms[channel]['df']['mAU'].to_numpy().copy()
+        self.select_row(names.index(channel))
+        self.set_params(l=300)
+        self.app._sp_extract(False)
+        np.testing.assert_array_equal(self.app.chromatograms[channel]['df']['mAU'], before)
+        self.assertTrue(any(n.endswith('300,4 no ref') for n in self.names()))
 
-    def test_sessione_conserva_i_parametri(self):
-        self.imposta(l=254, b=8, rif=(400, 20))
-        self.app._sp_estrai(True)
-        dati = pickle.loads(pickle.dumps(self.app._dati_sessione()))
+    def test_session_keeps_the_parameters(self):
+        self.set_params(l=254, b=8, ref=(400, 20))
+        self.app._sp_extract(True)
+        data = pickle.loads(pickle.dumps(self.app._session_data()))
         self.app.clear_all()
-        self.app._applica_sessione(dati)
-        self.seleziona(1)
+        self.app._apply_session(data)
+        self.select_row(1)
         self.assertEqual((self.app.var_sp_l.get(), self.app.var_sp_b.get()), ('254', '8'))
-        self.assertTrue(self.app.var_sp_uso_rif.get())
+        self.assertTrue(self.app.var_sp_use_ref.get())
 
 
 if __name__ == "__main__":
