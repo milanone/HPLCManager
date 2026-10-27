@@ -73,8 +73,12 @@ skipped when the sample folder is missing).
 
 `numpy`, `pandas`, `matplotlib`, `tkinter` (standard library); `scipy` (peak detection, smoothing) and
 `tkinterdnd2` (drag-and-drop) optional.
-[PlotStyleKit](https://github.com/milanone/PlotStyleKit) is an optional sibling repo (`../PlotStyleKit`)
-providing the Origin-like plot style and the figure editor.
+[PlotStyleKit](https://github.com/milanone/PlotStyleKit) is optional: it provides the Origin-like plot style and the
+figure editor. The program looks for it next to itself (`../PlotStyleKit`), in `~/progetti/PlotStyleKit`, in the
+folder named by the environment variable `PLOTSTYLEKIT` and in the folder you chose the last time; if it finds none
+it says so at start and asks for the folder, with *Cancel* for going without it (it will not ask again;
+*File > PlotStyleKit...* changes that). Without it the plot keeps a plain look, *Save Figure* writes the figure as
+drawn and *Edit Figure* offers to locate PlotStyleKit.
 
 ## License
 

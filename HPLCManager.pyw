@@ -30,24 +30,93 @@ except Exception:
     HAS_DND = False
 
 
-def _load_origin_style():
-    import importlib.util as ilu
-    here = os.path.dirname(os.path.abspath(__file__))
-    for path in (os.path.join(here, 'origin_style.py'),
-                 os.path.join(here, '..', 'PlotStyleKit', 'origin_style.py')):
-        if os.path.isfile(path):
-            spec = ilu.spec_from_file_location('origin_style', path)
-            mod = ilu.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            return mod
-    return None
+# ---- PlotStyleKit bootstrap: the same text in every program (PlotStyleKit/README.md, 'Using it from a program') ----
+import json
+import os
 
-try:
-    origin_style = _load_origin_style()
-    if origin_style is not None:
-        origin_style.applica_rcparams()
-except Exception:
-    origin_style = None
+PSK_MIN_API = 2
+PSK_CONFIG = os.path.join(os.path.expanduser('~'), '.plotstylekit.json')
+
+
+def _psk_config():
+    try:
+        with open(PSK_CONFIG, encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _psk_save(**changes):
+    cfg = _psk_config()
+    cfg.update(changes)
+    try:
+        with open(PSK_CONFIG, 'w', encoding='utf-8') as f:
+            json.dump(cfg, f)
+    except OSError:
+        pass
+
+
+def _psk_try(folder, min_api):
+    """(module, problem): problem is None when plotstylekit.py in `folder` loads and is recent enough."""
+    import importlib.util as ilu
+    path = os.path.join(folder, 'plotstylekit.py')
+    if not os.path.isfile(path):
+        return None, f"plotstylekit.py is not in {folder}"
+    try:
+        spec = ilu.spec_from_file_location('plotstylekit', path)
+        mod = ilu.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    except Exception as e:
+        return None, f"plotstylekit.py in {folder} cannot be loaded: {e}"
+    if getattr(mod, 'API', 0) < min_api:
+        return None, (f"PlotStyleKit in {folder} is too old for this program (API {getattr(mod, 'API', '?')}, "
+                      f"it needs {min_api}): update it")
+    return mod, None
+
+
+def _load_plotstylekit(min_api=PSK_MIN_API):
+    """(module, problem): the first usable PlotStyleKit, or None and a sentence saying what was wrong."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    folders = [here, os.environ.get('PLOTSTYLEKIT'), _psk_config().get('path'), os.path.join(here, '..', 'PlotStyleKit'),
+               os.path.expanduser(os.path.join('~', 'progetti', 'PlotStyleKit'))]
+    problem = "PlotStyleKit was not found (next to the program, PLOTSTYLEKIT, a folder you chose, ../PlotStyleKit)"
+    for folder in filter(None, folders):
+        if os.path.isfile(os.path.join(folder, 'plotstylekit.py')):
+            mod, why = _psk_try(folder, min_api)
+            if mod is not None:
+                return mod, None
+            problem = why
+    return None, problem
+
+
+def _ask_plotstylekit_folder(parent, problem, min_api=PSK_MIN_API):
+    """The warning that asks for the folder of PlotStyleKit. Returns the module, or None if the user cancels
+    (remembered: the program is not asked again) or closes the folder dialog (asked again next time)."""
+    from tkinter import filedialog, messagebox
+    while True:
+        if not messagebox.askokcancel(
+                "PlotStyleKit", problem + ".\n\nOK: choose the folder that contains plotstylekit.py.\n"
+                "Cancel: use the program without it (plain matplotlib look, no Edit Figure). You will not be asked "
+                "again; File > PlotStyleKit... lets you change your mind.", parent=parent):
+            _psk_save(declined=True)
+            return None
+        folder = filedialog.askdirectory(parent=parent, title="Folder of PlotStyleKit (contains plotstylekit.py)")
+        if not folder:
+            return None
+        mod, why = _psk_try(folder, min_api)
+        if mod is not None:
+            _psk_save(path=folder, declined=False)
+            return mod
+        problem = why
+
+
+psk, PSK_PROBLEM = _load_plotstylekit()
+if psk is not None:
+    try:
+        psk.setup()
+    except Exception as e:
+        psk, PSK_PROBLEM = None, f"PlotStyleKit failed to start: {e}"
+# ---- end of the PlotStyleKit bootstrap ----
 
 
 class HPLCManager:
@@ -73,6 +142,8 @@ class HPLCManager:
         self.root = root
         self.root.title("HPLC Manager")
         self.root.geometry("1500x800")
+        if psk is None and not _psk_config().get('declined'):
+            self.root.after(400, lambda: self._offer_plotstylekit(PSK_PROBLEM))
         self.chromatograms = {}
         self._dirty = False
         self._cursor_artists = []
@@ -87,7 +158,6 @@ class HPLCManager:
         self._sp_color_n = 0          # counter that assigns a stable color to each picked spectrum
         self._sp_multi_last = []     # values of the last 'Several wavelengths' dialog (reopened unchanged)
         self._chosen_spectra = []      # spectra picked with click/Show: {'dataset','t','wl','y','color','visible','line'}
-        self._pe_module = None         # plot_editor module (PlotStyleKit), loaded on first use
         self.current_dir = os.getcwd()
         self._reset_view = True       # next redraw: automatic axes (new data) instead of keeping the zoom
         self.var_include_ch = tk.BooleanVar(value=False)   # also load the recorded channels (.ch)
@@ -178,6 +248,7 @@ class HPLCManager:
         m.add_command(label="Save Figure Image (PNG, PDF, SVG)...", command=self.save_figure_image)
         m.add_command(label="Save Figure (pickle)...", command=self.save_figure_pickle)
         m.add_command(label="Edit Figure...", command=self.open_figure_editor)
+        m.add_command(label="PlotStyleKit...", command=self.plotstylekit_dialog)
         m.add_separator()
         m.add_command(label="Exit", command=self.on_exit)
         self.menu_bar.add_cascade(label="File", menu=m)
@@ -802,8 +873,8 @@ class HPLCManager:
             # fixed position: with 'best' matplotlib recomputes it at every redraw, taking the
             # cursor line into account too, and the legend would jump when the cursor passes over it
             self.ax.legend(loc='upper right')
-        if origin_style is not None:
-            origin_style.applica_stile_origin(self.ax, self.fig, set_size=False)
+        if psk is not None:
+            psk.style(self.ax, self.fig, set_size=False)
             self.ax.xaxis.label.set_fontsize(14)
             self.ax.yaxis.label.set_fontsize(14)
             self.ax.tick_params(axis='both', labelsize=12)
@@ -823,7 +894,7 @@ class HPLCManager:
     def _trim_margins(self, event=None):
         """Reset the margins + tight_layout: with enlarged fonts the Y axis title
         would end up outside the canvas, and the margins are fractions (they change on resize)."""
-        if not self.chromatograms or origin_style is None:
+        if not self.chromatograms or psk is None:
             return
         try:
             self.fig.subplots_adjust(left=0.125, right=0.9, bottom=0.11, top=0.88,
@@ -1815,35 +1886,44 @@ class HPLCManager:
         self._apply_session(data)
         self._dirty = False
 
-    def _copy_figure(self):
-        """Copy of the current figure for saving/editor: without the cursor and without the lines
-        of the picked spectra, restyled Origin 'single' (4:3) instead of the panel size."""
-        self._clear_cursor()
-        fig = pickle.loads(pickle.dumps(self.fig))
+    def _clean_copy(self, fig):
+        """What belongs only to the live view and must not reach a file or the editor: the markers of the picked
+        spectra (PlotStyleKit calls this on its own copy of the figure)."""
         for ax in fig.axes:
             for a in list(ax.lines) + list(ax.texts):
                 if a.get_gid() == 'marker':
                     a.remove()
-        if origin_style is not None and fig.axes:
-            origin_style.applica_stile_origin(fig.axes[0], fig, set_size=True, preset='single')
+
+    def _plain_copy(self):
+        """Copy of the figure as it is, for when PlotStyleKit is not in use."""
+        self._clear_cursor()
+        fig = pickle.loads(pickle.dumps(self.fig))
+        self._clean_copy(fig)
         return fig
 
     def save_figure_image(self):
         if not self.chromatograms:
             messagebox.showwarning("Save Figure Image", "No chromatogram loaded.")
             return
+        self._clear_cursor()
+        if psk is not None:       # Origin 'single' (4:3) copy, the legend where it was put
+            path = psk.save_image_dialog(self.fig, self.root, initialdir=self.current_dir, clean=self._clean_copy,
+                                         unpin=False)
+            if path:
+                self.current_dir = os.path.dirname(path)
+            return
         path = self._choose_save_file("Save Figure Image", '.png', [
             ("PNG", "*.png"), ("PDF", "*.pdf"), ("SVG", "*.svg"), ("All Files", "*.*")])
         if not path:
             return
         try:
-            self._copy_figure().savefig(path, dpi=300)
+            self._plain_copy().savefig(path, dpi=300)
         except Exception as e:
             traceback.print_exc()
             messagebox.showerror("Save Figure Image", "Save failed:\n%s" % e)
             return
         self.current_dir = os.path.dirname(path)
-        messagebox.showinfo("Save Figure Image", "Figure saved:\n%s" % path)
+        messagebox.showinfo("Save Figure Image", "Figure saved (plain look: PlotStyleKit is not in use):\n%s" % path)
 
     def save_figure_pickle(self):
         """Save the current figure as a matplotlib pickle: reopenable with plot_editor.pyw as a
@@ -1851,58 +1931,82 @@ class HPLCManager:
         if not self.chromatograms:
             messagebox.showwarning("Save Figure", "No chromatogram loaded.")
             return
+        self._clear_cursor()
+        if psk is not None:
+            path = psk.save_pickle_dialog(self.fig, self.root, initialdir=self.current_dir, clean=self._clean_copy,
+                                          unpin=False)
+            if path:
+                self.current_dir = os.path.dirname(path)
+            return
         path = self._choose_save_file("Save Figure", '.fig.pickle', [
             ("Matplotlib Figure (pickle)", "*.pickle *.pkl"), ("All Files", "*.*")])
         if not path:
             return
         try:
             with open(path, 'wb') as f:
-                pickle.dump(self._copy_figure(), f)
+                pickle.dump(self._plain_copy(), f)
         except Exception as e:
             traceback.print_exc()
             messagebox.showerror("Save Figure", "Save failed:\n%s" % e)
             return
         self.current_dir = os.path.dirname(path)
-        messagebox.showinfo("Save Figure", "Figure saved:\n%s" % path)
-
-    def _load_plot_editor(self):
-        """Import plot_editor (only once): first a local copy, then the sibling repo PlotStyleKit."""
-        if self._pe_module is None:
-            import importlib.util
-            here = os.path.dirname(os.path.abspath(__file__))
-            candidates = [os.path.join(here, 'plot_editor.pyw'),
-                         os.path.join(here, '..', 'PlotStyleKit', 'plot_editor.pyw')]
-            path = next((c for c in candidates if os.path.isfile(c)), None)
-            if path is None:
-                raise FileNotFoundError(
-                    "plot_editor.pyw not found (PlotStyleKit repo missing next to this project)")
-            spec = importlib.util.spec_from_file_location('plot_editor', path)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            self._pe_module = mod
-        return self._pe_module
+        messagebox.showinfo("Save Figure", "Figure saved (not restyled: PlotStyleKit is not in use):\n%s" % path)
 
     def open_figure_editor(self):
         """Open the PlotStyleKit Plot Editor on the current figure (an independent copy)."""
         if not self.chromatograms:
             messagebox.showwarning("Edit Figure", "No chromatogram loaded.")
             return
-        try:
-            pe = self._load_plot_editor()
-        except Exception as e:
-            traceback.print_exc()
-            messagebox.showerror("Edit Figure", "plot_editor.pyw not available:\n%s" % e)
+        if not self._need_plotstylekit("Edit Figure"):
             return
+        self._clear_cursor()
+        psk.edit_dialog(self.fig, self.root, title="current figure", clean=self._clean_copy, unpin=False)
+
+    # ---- PlotStyleKit: the Origin look and the figure editor (a fallback without it for each) ----
+    def _adopt_plotstylekit(self, mod):
+        """Start a PlotStyleKit that was just located (at start-up or from File > PlotStyleKit...)."""
+        global psk, PSK_PROBLEM
         try:
-            fig = self._copy_figure()
+            mod.setup()
         except Exception as e:
-            traceback.print_exc()
-            messagebox.showerror("Edit Figure", "Cannot duplicate the figure:\n%s" % e)
+            messagebox.showwarning("PlotStyleKit", f"PlotStyleKit failed to start:\n{e}", parent=self.root)
+            return False
+        psk, PSK_PROBLEM = mod, None
+        self.refresh_view()
+        messagebox.showinfo("PlotStyleKit", f"PlotStyleKit {mod.VERSION} is in use:\n{os.path.dirname(mod.__file__)}",
+                            parent=self.root)
+        return True
+
+    def _offer_plotstylekit(self, problem):
+        """The warning that asks for the folder of PlotStyleKit, with a Cancel for going without it."""
+        mod = _ask_plotstylekit_folder(self.root, problem)
+        if mod is not None:
+            self._adopt_plotstylekit(mod)
+
+    def plotstylekit_dialog(self):
+        """File > PlotStyleKit...: locate it (when it is not in use) or pick another copy (when it is)."""
+        if psk is None:
+            _psk_save(declined=False)
+            self._offer_plotstylekit(PSK_PROBLEM or "PlotStyleKit is not in use")
             return
-        top = tk.Toplevel(self.root)
-        top.geometry("1300x820")
-        editor = pe.PlotEditor(top)
-        editor.carica_figura(fig, title="current figure")
+        folder = filedialog.askdirectory(parent=self.root, title="Folder of PlotStyleKit (now in use: "
+                                         f"{os.path.dirname(psk.__file__)})")
+        if not folder:
+            return
+        mod, why = _psk_try(folder, PSK_MIN_API)
+        if mod is None:
+            messagebox.showwarning("PlotStyleKit", why + ".", parent=self.root)
+            return
+        _psk_save(path=folder, declined=False)
+        self._adopt_plotstylekit(mod)
+
+    def _need_plotstylekit(self, what):
+        """For what only PlotStyleKit does (the figure editor): offer to find it. True if it is in use afterwards."""
+        if psk is None and messagebox.askyesno(
+                what, f"{what} belongs to PlotStyleKit, which is not in use.\n\nLocate PlotStyleKit now?",
+                parent=self.root):
+            self.plotstylekit_dialog()
+        return psk is not None
 
     # ------------------------------------------------------------------ instrument curves
     INSTRUMENT_GROUPS = (('bar', 'Pressure (bar)'), ('%', 'Solvent composition (%)'),

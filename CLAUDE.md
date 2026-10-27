@@ -76,9 +76,16 @@ first: Sample, Date, Method, Column...). `open_instrument_curves()` is the stack
 
 **Export / session** (File menu): `peaks_table()` / `spectra_table()` (only the ticked spectra) build the
 CSVs; `export_full_dad`; `export_instrument_curves`; `save_session` / `open_session` pickle
-`_session_data()` into a gzip `.hplcsession`; `_copy_figure()` makes the Origin-styled copy used by
-`save_figure_image`, `save_figure_pickle` and `open_figure_editor` (PlotStyleKit `plot_editor.pyw`, loaded by
-path). CSVs use `;` and latin-1.
+`_session_data()` into a gzip `.hplcsession`; `save_figure_image`, `save_figure_pickle` and `open_figure_editor` go
+through PlotStyleKit's integration module (`psk.*_dialog`, which makes the Origin 'single' copy; `_clean_copy` removes the spectra
+markers from it and `unpin=False` keeps the legend at `upper right`). CSVs use `;` and latin-1.
+
+**PlotStyleKit** is found by the common bootstrap block near the top of the file (the same text as in PlotStyleKit's README: change
+it there, not here): `psk` is the module or None, `PSK_PROBLEM` says why. If it is not found and the user has not declined,
+`_offer_plotstylekit()` asks for the folder 400 ms after the window opens; File > PlotStyleKit... (`plotstylekit_dialog()`)
+changes it later. Fallbacks without it: the live plot gets a plain grid (no Origin look), `_plain_copy()` is what
+`save_figure_image` / `save_figure_pickle` write, and 'Edit Figure' offers to locate it (`_need_plotstylekit`).
+`tests/test_plotstylekit.py` drives all of this with answers in place of the dialogs.
 
 ## ChemStation file formats (all verified on one run, `009-0201.D`)
 
@@ -196,8 +203,8 @@ tables with headers (`ObjClass`, `Title`, `DataType`...) and data. Little-endian
 - Follow `..\CLAUDE.md`: everything in English (identifiers, comments, docstrings, UI and `messagebox` text, tests,
   commits, README and this file), surgical edits. The code was translated from Italian to English in one pass
   (identifiers, comments, messages, tests, the `example data/` folder).
-- External names from the sibling `PlotStyleKit` repo (`applica_rcparams`, `applica_stile_origin`,
-  `carica_figura`) are still Italian there and are called as they are.
+- PlotStyleKit is used only through `psk` (its integration module `plotstylekit.py`, English names): the Italian
+  names of `origin_style.py` / `plot_editor.pyw` are not called from here any more.
 - Sessions saved before the translation (`.hplcsession` with Italian keys such as `cromatogrammi`) cannot be opened.
 - Test GUI features with real events (list selection via `<<ListboxSelect>>`, mouse events on the canvas), and look
   at the result in a screenshot; the Tk tests must clean up their windows.
